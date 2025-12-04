@@ -423,7 +423,19 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
                 code=code_truncated
             )
             
-            response = self.model.generate_content(prompt)
+            # Retry logic for rate limits
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = self.model.generate_content(prompt)
+                    break
+                except Exception as e:
+                    if "429" in str(e) and attempt < max_retries - 1:
+                        wait_time = 10 * (attempt + 1)  # 10s, 20s, 30s
+                        print(f"   ⏳ Rate limited, waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        raise e
             
             elapsed = time.time() - start_time
             print(f"   ⏱️  AI response time: {elapsed:.1f}s")
@@ -502,8 +514,8 @@ def main():
     CODE_EXTENSIONS = ('.java', '.py', '.js', '.ts', '.jsx', '.tsx', '.tf', '.yaml', '.yml', '.json', '.xml', '.properties')
     SKIP_PATHS = ('.github/', 'node_modules/', 'target/', 'build/', '.git/', '__pycache__/', 'test-samples/dependencies/')
     
-    # OPTIMIZATION: Limit max files to prevent long scans
-    MAX_FILES = 10
+    # OPTIMIZATION: Limit max files to avoid rate limits
+    MAX_FILES = 5
     
     # Filter files first
     files_to_scan = []
