@@ -1,5 +1,15 @@
 name: AI Compliance Security Scan
 
+# =============================================================================
+# AI-POWERED COMPLIANCE SCANNER
+# =============================================================================
+# This workflow uses a HYBRID approach:
+# 1. RULE-BASED: Fast regex patterns for known vulnerabilities
+# 2. AI/LLM: OpenAI GPT for contextual analysis (optional, requires API key)
+#
+# To enable AI features, add OPENAI_API_KEY to repository secrets
+# =============================================================================
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -12,6 +22,10 @@ permissions:
 
 env:
   COMPLIANCE_API_URL: ${{ secrets.COMPLIANCE_API_URL || 'http://localhost:8000' }}
+  # AI Configuration
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  AI_MODEL: ${{ vars.AI_MODEL || 'gpt-4o-mini' }}  # Cost-effective default
+  ENABLE_AI: ${{ vars.ENABLE_AI || 'true' }}
 
 jobs:
   compliance-scan:
@@ -43,22 +57,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Scanner
+      - name: Install Scanner Dependencies
         run: |
-          pip install requests pyyaml
+          pip install requests pyyaml openai
 
       - name: Get Scanner from Base Branch
         run: |
           git fetch origin ${{ github.base_ref }}
           git checkout origin/${{ github.base_ref }} -- .github/scripts/compliance_scanner.py
 
-      - name: Run Compliance Scan
+      - name: Run AI Compliance Scan
         id: scan
         env:
           CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          # AI environment variables are inherited from job env
         run: |
+          echo "🤖 Starting AI-Powered Compliance Scan..."
+          echo "AI Enabled: ${{ env.OPENAI_API_KEY && 'Yes' || 'No (add OPENAI_API_KEY secret)' }}"
           python .github/scripts/compliance_scanner.py
 
       - name: Comment PR - Blocking Issues
@@ -80,6 +97,21 @@ jobs:
             comment += `| 🟡 Medium | ${report.summary.medium} |\n`;
             comment += `| 🔵 Low | ${report.summary.low} |\n\n`;
             
+            // AI Insights section
+            if (report.ai_powered && report.ai_insights) {
+              comment += `### 🤖 AI Analysis\n`;
+              if (report.ai_insights.risk_score) {
+                comment += `- **Risk Score:** ${report.ai_insights.risk_score}/10\n`;
+              }
+              if (report.ai_insights.false_positives_filtered > 0) {
+                comment += `- **False Positives Filtered:** ${report.ai_insights.false_positives_filtered}\n`;
+              }
+              if (report.ai_insights.executive_summary) {
+                comment += `- **Summary:** ${report.ai_insights.executive_summary}\n`;
+              }
+              comment += `\n`;
+            }
+            
             if (report.blocking_issues.length > 0) {
               comment += `### 🚨 Blocking Issues (Must Fix)\n\n`;
               for (const issue of report.blocking_issues) {
@@ -88,7 +120,11 @@ jobs:
                 comment += `- **SCF Control:** ${issue.scf_control}\n`;
                 comment += `- **SOC2:** ${issue.soc2_control}\n`;
                 comment += `- **Description:** ${issue.description}\n`;
-                comment += `- **Remediation:** ${issue.remediation}\n\n`;
+                comment += `- **Remediation:** ${issue.remediation}\n`;
+                if (issue.ai_reasoning) {
+                  comment += `- **🤖 AI Analysis:** ${issue.ai_reasoning}\n`;
+                }
+                comment += `\n`;
               }
             }
             
@@ -99,7 +135,8 @@ jobs:
               }
             }
             
-            comment += `\n---\n*AI Compliance-as-Code Bot | SCF + SOC2 Mapped*`;
+            const aiStatus = report.ai_powered ? '🤖 AI-Enhanced' : '📋 Rule-Based';
+            comment += `\n---\n*${aiStatus} | AI Compliance-as-Code Bot | SCF + SOC2 Mapped*`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -145,7 +182,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## ✅ Compliance Check Passed\n\nNo security or compliance issues detected.\n\n---\n*AI Compliance-as-Code Bot*'
+              body: '## ✅ Compliance Check Passed\n\nNo security or compliance issues detected.\n\n---\n*🤖 AI Compliance-as-Code Bot*'
             });
 
       - name: Fail if Blocked
@@ -153,3 +190,28 @@ jobs:
         run: |
           echo "::error::PR blocked due to security/compliance violations"
           exit 1
+
+# =============================================================================
+# HOW AI IS USED IN THIS WORKFLOW
+# =============================================================================
+# 
+# 1. RULE-BASED DETECTION (Always runs):
+#    - Fast regex pattern matching for known vulnerability signatures
+#    - Hardcoded secrets, SQL injection, command injection, etc.
+#    - Deterministic: same input = same output
+#
+# 2. AI/LLM ANALYSIS (When OPENAI_API_KEY is set):
+#    - Contextual code understanding beyond pattern matching
+#    - False positive reduction using semantic analysis
+#    - AI-generated remediation code suggestions
+#    - Risk scoring with business impact reasoning
+#    - Compliance gap analysis across frameworks (SOC2, HIPAA, PCI-DSS)
+#
+# 3. HYBRID MERGE:
+#    - AI validates rule-based findings (true/false positive)
+#    - AI can adjust severity based on context
+#    - AI discovers additional issues not caught by rules
+#    - Final report combines both for best accuracy
+#
+# To enable AI: Add OPENAI_API_KEY to repository Settings > Secrets
+# =============================================================================
