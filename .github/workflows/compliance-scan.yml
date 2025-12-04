@@ -207,21 +207,29 @@ jobs:
               summary += `**Categories Detected:** ${owaspCats.join(', ')}\n\n`;
             }
             
-            // SCF Controls (SCF-GRC-03)
+            // SCF Controls - deduplicated and concise
             const scfControls = comp.scf_controls_violated || [];
             if (scfControls.length > 0) {
-              summary += `### 🏛️ SCF Controls Violated (SCF-GRC-03)\n`;
-              summary += `| Control | Description |\n|---------|-------------|\n`;
+              // Deduplicate and normalize control IDs
+              const uniqueControls = [...new Set(scfControls.map(c => {
+                // Extract main control category (e.g., "CRY-03" from "SCF-CRY-03" or "SCF-2.1.1")
+                const match = c.match(/(CRY|TDA|IAC|NET|LOG|VULN|SEC|AUT|CFG)[-]?\d*/i);
+                return match ? match[0].toUpperCase() : c.split(':')[0].trim();
+              }))].slice(0, 8);  // Max 8 controls
+              
               const controlDescs = {
-                'CRY-03': 'Secret Management', 'CRY-01': 'Cryptographic Controls',
-                'TDA-02': 'Secure Coding', 'IAC-01': 'Least Privilege',
-                'NET-01': 'Network Security', 'LOG-01': 'Audit Logging',
-                'VULN-11': 'Vulnerability Identification', 'VULN-14': 'SCA/Container Security'
+                'CRY': '🔐 Cryptography', 'TDA': '💻 Secure Coding', 'IAC': '🔑 Access Control',
+                'NET': '🌐 Network Security', 'LOG': '📝 Logging', 'VULN': '🛡️ Vulnerability Mgmt',
+                'SEC': '🔒 Security Controls', 'AUT': '👤 Authentication', 'CFG': '⚙️ Configuration'
               };
-              scfControls.forEach(c => {
-                summary += `| ${c} | ${controlDescs[c] || 'Security Control'} |\n`;
+              
+              const controlTags = uniqueControls.map(c => {
+                const key = Object.keys(controlDescs).find(k => c.includes(k));
+                return key ? controlDescs[key] : `📋 ${c}`;
               });
-              summary += `\n`;
+              
+              summary += `### 🏛️ Controls Violated\n`;
+              summary += `${controlTags.join(' • ')}\n\n`;
             }
             
             // Remediation SLAs (SCF-GRC-14)
