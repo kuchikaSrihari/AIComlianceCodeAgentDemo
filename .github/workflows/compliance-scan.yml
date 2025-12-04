@@ -1,4 +1,4 @@
-name: AI Compliance Scan
+name: SecureFlow AI
 
 on:
   pull_request:
@@ -179,10 +179,12 @@ jobs:
             const comp = report.compliance || {};
             const slas = report.remediation_slas || {};
             
-            // Build summary header
-            let summary = report.decision === 'BLOCK' 
-              ? '## 🚫 Compliance Check Failed\n\n' 
-              : '## ✅ Compliance Check Passed\n\n';
+            // Build summary header with branded name
+            let summary = `# 🛡️ SecureFlow AI\n`;
+            summary += `> *Intelligent Compliance-as-Code Scanner*\n\n`;
+            summary += report.decision === 'BLOCK' 
+              ? '## 🚫 Security Issues Found\n\n' 
+              : '## ✅ Security Check Passed\n\n';
             
             // Risk metrics table (SCF-GRC-01)
             summary += `### 📊 Risk Assessment (SCF-GRC-01)\n\n`;
@@ -266,7 +268,7 @@ jobs:
             summary += `| AI Model | Google Gemini 2.0 Flash |\n`;
             summary += `</details>\n\n`;
             
-            summary += `---\n*🤖 AI Compliance-as-Code Bot v2.0 | Enterprise Security Analysis*`;
+            summary += `---\n*🛡️ **SecureFlow AI** | Powered by Google Gemini 2.0*`;
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
