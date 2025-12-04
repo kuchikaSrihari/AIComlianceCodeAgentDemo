@@ -572,8 +572,25 @@ def main():
         except Exception as e:
             print(f"   ❌ Error: {e}")
     
+    # Debug: Show findings count
+    print(f"\n{'='*50}")
+    print(f"📊 SCAN COMPLETE")
+    print(f"   Files scanned: {files_scanned}")
+    print(f"   Total findings: {len(all_findings)}")
+    
+    # Show severity breakdown
+    sev_count = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for f in all_findings:
+        sev = f.get("severity", "low").lower()
+        sev_count[sev] = sev_count.get(sev, 0) + 1
+    print(f"   Critical: {sev_count['critical']}, High: {sev_count['high']}, Medium: {sev_count['medium']}, Low: {sev_count['low']}")
+    print(f"{'='*50}\n")
+    
     # Build report
     report = build_report(all_findings, risk_scores, summaries, scanner.enabled, files_scanned)
+    
+    print(f"🚦 DECISION: {report['decision']}")
+    print(f"   Reason: {report.get('reason', 'N/A')}")
     
     # Save and output
     save_report(report)
@@ -582,7 +599,10 @@ def main():
     
     # Exit with error if blocked
     if report["decision"] == "BLOCK":
+        print("❌ EXITING WITH ERROR CODE 1 - BLOCKING ISSUES FOUND")
         sys.exit(1)
+    else:
+        print("✅ No blocking issues - allowing merge")
 
 
 def build_report(findings: List[Dict], risk_scores: List, summaries: List, ai_powered: bool, files_scanned: int) -> Dict:
