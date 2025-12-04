@@ -285,6 +285,14 @@ jobs:
               body: summary
             });
 
-      - name: Fail if Blocked
-        if: steps.scan.outputs.decision == 'BLOCK'
-        run: exit 1
+      - name: Check for Blocking Issues
+        if: always()
+        run: |
+          if [ -f scan_report.json ]; then
+            DECISION=$(cat scan_report.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('decision','ALLOW'))")
+            echo "Decision: $DECISION"
+            if [ "$DECISION" = "BLOCK" ]; then
+              echo "❌ BLOCKING: Critical/High security issues found!"
+              exit 1
+            fi
+          fi
