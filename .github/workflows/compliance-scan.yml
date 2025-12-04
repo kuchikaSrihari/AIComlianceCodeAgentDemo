@@ -26,41 +26,62 @@ jobs:
         with:
           files: '**/*.{java,py,js,ts,tf,yaml,yml,json}'
 
-      - name: Cleanup Old Comments
+      - name: Cleanup Old Summary Comments
         uses: actions/github-script@v7
         with:
           script: |
-            // Delete ALL comments from github-actions bot on this PR
+            // Delete ONLY old summary comments (keep inline review comments on code)
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
+            
+            let deleted = 0;
             for (const c of comments) {
               if (c.user?.login === 'github-actions[bot]') {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: c.id
-                }).catch(() => {});
+                try {
+                  await github.rest.issues.deleteComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: c.id
+                  });
+                  deleted++;
+                  console.log(`Deleted summary comment: ${c.id}`);
+                } catch (e) {
+                  console.log(`Failed to delete ${c.id}: ${e.message}`);
+                }
               }
             }
-            // Delete ALL review comments from bot
-            const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+            console.log(`Deleted ${deleted} old summary comments`);
+            
+            // Also delete old review BODIES (the "suggested changes" headers)
+            // but this keeps the inline comments on specific lines
+            const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number
             });
-            for (const rc of reviewComments) {
-              if (rc.user?.login === 'github-actions[bot]') {
-                await github.rest.pulls.deleteReviewComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: rc.id
-                }).catch(() => {});
+            
+            for (const review of reviews) {
+              if (review.user?.login === 'github-actions[bot]' && review.state !== 'PENDING') {
+                try {
+                  // Dismiss old reviews to clean up "suggested changes" messages
+                  await github.rest.pulls.dismissReview({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: context.issue.number,
+                    review_id: review.id,
+                    message: 'Superseded by new scan'
+                  });
+                  console.log(`Dismissed review: ${review.id}`);
+                } catch (e) {
+                  console.log(`Could not dismiss review ${review.id}: ${e.message}`);
+                }
               }
             }
-            console.log('Cleanup done');
+            
+            console.log('Cleanup complete');
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -77,7 +98,69 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python .github/scripts/compliance_scanner.py
 
-      - name: Post Results
+      - name: Post Inline Comments
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('scan_report.json')) return;
+            
+            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            const findings = [...(report.blocking_issues || []), ...(report.suggestions || [])];
+            
+            if (findings.length === 0) {
+              console.log('No findings to post');
+              return;
+            }
+            
+            // Get PR info for commit SHA
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            // Build inline comments for code lines
+            const comments = [];
+            for (const f of findings) {
+              if (!f.file || !f.line) continue;
+              
+              const sev = (f.severity || 'low').toUpperCase();
+              const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
+              
+              let body = `### ${icon} ${sev}: ${f.title}\n\n`;
+              if (f.cve_id) body += `**CVE:** ${f.cve_id}\n`;
+              if (f.cwe_id) body += `**CWE:** ${f.cwe_id}\n`;
+              body += `**SCF:** ${f.scf_control || 'N/A'}\n\n`;
+              body += `**Issue:** ${f.description || 'Security issue detected'}\n\n`;
+              body += `**Fix:** ${f.remediation || 'Review and fix'}\n`;
+              
+              comments.push({
+                path: f.file,
+                line: parseInt(f.line) || 1,
+                body: body
+              });
+            }
+            
+            // Create review with inline comments
+            if (comments.length > 0) {
+              try {
+                await github.rest.pulls.createReview({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  commit_id: pr.head.sha,
+                  event: 'COMMENT',
+                  comments: comments.slice(0, 30)
+                });
+                console.log(`Posted ${comments.length} inline comments`);
+              } catch (e) {
+                console.log('Failed to post inline comments:', e.message);
+              }
+            }
+
+      - name: Post Summary Comment
         if: always()
         uses: actions/github-script@v7
         with:
@@ -93,58 +176,33 @@ jobs:
             // Build summary
             let summary = report.decision === 'BLOCK' ? '## 🚫 Compliance Check Failed\n\n' : '## ✅ Compliance Check Passed\n\n';
             
-            // Severity table
-            summary += `### 📊 Scan Summary\n\n`;
             summary += `| Severity | Count | | Metric | Value |\n`;
             summary += `|----------|-------|-|--------|-------|\n`;
             summary += `| 🔴 Critical | ${s.critical || 0} | | Risk Score | ${ai.risk_score || 0}/10 |\n`;
             summary += `| 🟠 High | ${s.high || 0} | | Files Scanned | ${ai.files_scanned || 0} |\n`;
-            summary += `| 🟡 Medium | ${s.medium || 0} | | Total Findings | ${ai.total_findings || findings.length} |\n`;
+            summary += `| 🟡 Medium | ${s.medium || 0} | | Findings | ${findings.length} |\n`;
             summary += `| 🔵 Low | ${s.low || 0} | | AI Powered | ✅ |\n\n`;
             
-            // Executive summary
             if (ai.executive_summary) {
-              summary += `### 📋 Executive Summary\n> ${ai.executive_summary}\n\n`;
+              summary += `> ${ai.executive_summary}\n\n`;
             }
             
-            // Findings by category
-            if (findings.length > 0) {
-              summary += `### 🔍 Findings\n\n`;
-              summary += `| Severity | Issue | Location | SCF Control | Fix |\n`;
-              summary += `|----------|-------|----------|-------------|-----|\n`;
-              
-              for (const f of findings.slice(0, 12)) {
-                const sev = (f.severity || 'low').toUpperCase();
-                const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
-                const cve = f.cve_id ? ` (${f.cve_id})` : '';
-                const fix = (f.remediation || 'Review manually').substring(0, 50);
-                summary += `| ${icon} ${sev} | ${f.title}${cve} | \`${f.file}:${f.line}\` | ${f.scf_control || '-'} | ${fix}... |\n`;
-              }
-              summary += `\n`;
-            }
-            
-            // Compliance frameworks
-            summary += `### 🏛️ Compliance Mapping\n\n`;
-            summary += `**Frameworks Checked:** SCF, SOC2, HIPAA, PCI-DSS, NIST\n\n`;
-            
+            // Compliance mapping
             const controls = new Set();
-            findings.forEach(f => {
-              if (f.scf_control) controls.add(f.scf_control);
-            });
+            findings.forEach(f => { if (f.scf_control) controls.add(f.scf_control); });
             if (controls.size > 0) {
-              summary += `**Controls Violated:** ${[...controls].join(', ')}\n\n`;
+              summary += `**SCF Controls Violated:** ${[...controls].join(', ')}\n\n`;
             }
             
-            // Audit evidence note
-            summary += `<details>\n<summary>📁 Audit Evidence</summary>\n\n`;
-            summary += `- **Scan Time:** ${new Date().toISOString()}\n`;
-            summary += `- **PR:** #${context.issue.number}\n`;
-            summary += `- **Commit:** ${context.sha?.substring(0, 7) || 'N/A'}\n`;
-            summary += `- **Branch:** ${context.payload.pull_request?.head?.ref || 'N/A'}\n`;
-            summary += `- **Report:** \`scan_report.json\` (artifact)\n`;
+            summary += `📍 **See inline comments on code for details and fixes**\n\n`;
+            
+            summary += `<details><summary>📁 Audit Evidence</summary>\n\n`;
+            summary += `- Scan: ${new Date().toISOString()}\n`;
+            summary += `- PR: #${context.issue.number}\n`;
+            summary += `- Commit: ${context.payload.pull_request?.head?.sha?.substring(0, 7) || 'N/A'}\n`;
             summary += `</details>\n\n`;
             
-            summary += `---\n*🤖 AI Compliance-as-Code Bot | Shift-left security powered by Google Gemini*`;
+            summary += `---\n*🤖 AI Compliance-as-Code Bot | Google Gemini*`;
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
