@@ -288,59 +288,29 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
 
     def __init__(self):
         """
-        Initialize AI Compliance Scanner with optimized model configuration.
+        Initialize AI Compliance Scanner with Groq API.
         
-        Model Selection: Gemini 2.0 Flash
-        - Optimized for code understanding and security analysis
-        - Fast inference for CI/CD integration
-        - Large context window (1M tokens) for full file analysis
+        Model Selection: Llama 3.1 70B via Groq
+        - Fast inference (Groq's LPU)
+        - Free tier with generous limits
+        - Great for code analysis
         """
-        self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        self.api_key = os.environ.get("GROQ_API_KEY")
         self.enabled = False
-        self.model_name = "gemini-2.0-flash-exp"  # Working model - needs quota
-        self.genai = None
+        self.model_name = "llama-3.1-70b-versatile"
+        self.client = None
         self.scan_stats = {"files": 0, "findings": 0, "time_ms": 0}
         
         if self.api_key:
             try:
-                import time
-                start_time = time.time()
-                
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                
-                # Optimized configuration for security analysis
-                # - Low temperature (0.1): Consistent, deterministic analysis
-                # - High top_p (0.95): Allow nuanced security reasoning
-                # - Large output (8192): Detailed findings with code fixes
-                generation_config = {
-                    "temperature": 0.1,      # Precise, consistent analysis
-                    "top_p": 0.95,           # Balanced creativity for edge cases
-                    "top_k": 40,             # Focused token selection
-                    "max_output_tokens": 4096,  # Balanced output size
-                }
-                
-                # Safety settings optimized for security content analysis
-                safety_settings = [
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                ]
-                
-                self.model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=generation_config,
-                    system_instruction=self.SYSTEM_PROMPT,
-                    safety_settings=safety_settings
-                )
-                self.genai = genai
+                from groq import Groq
+                self.client = Groq(api_key=self.api_key)
                 self.enabled = True
                 
                 print("╔══════════════════════════════════════════════════════════════╗")
                 print("║          🤖 AI COMPLIANCE ENGINE INITIALIZED                 ║")
                 print("╠══════════════════════════════════════════════════════════════╣")
-                print(f"║  Model: Google Gemini 2.0 Flash                              ║")
+                print(f"║  Model: Llama 3.1 70B (via Groq)                             ║")
                 print(f"║  Mode:  Enterprise Security Analysis                         ║")
                 print(f"║  Temp:  0.1 (High precision)                                 ║")
                 print("╠══════════════════════════════════════════════════════════════╣")
@@ -350,13 +320,13 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
                 print("╚══════════════════════════════════════════════════════════════╝")
                 
             except Exception as e:
-                print(f"⚠️ Failed to initialize Gemini: {e}")
+                print(f"⚠️ Failed to initialize Groq: {e}")
         else:
             print("╔══════════════════════════════════════════════════════════════╗")
             print("║  ⚠️  AI ENGINE NOT CONFIGURED                                ║")
             print("╠══════════════════════════════════════════════════════════════╣")
-            print("║  Add GEMINI_API_KEY to repository secrets to enable AI       ║")
-            print("║  scanning. Without AI, only basic pattern matching works.    ║")
+            print("║  Add GROQ_API_KEY to repository secrets to enable AI         ║")
+            print("║  scanning. Get free key at: https://console.groq.com         ║")
             print("╚══════════════════════════════════════════════════════════════╝")
 
     def get_file_type(self, filepath: str) -> str:
@@ -426,14 +396,22 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
                 code=code_truncated
             )
             
-            # Call AI - no retry, fail fast if rate limited
-            response = self.model.generate_content(prompt)
+            # Call Groq API
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=4096
+            )
             
             elapsed = time.time() - start_time
             print(f"   ⏱️  AI response time: {elapsed:.1f}s")
             
             # Parse JSON from response
-            text = response.text.strip()
+            text = response.choices[0].message.content.strip()
             
             # Remove markdown code blocks if present
             if "```" in text:

@@ -88,13 +88,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install google-generativeai
+        run: pip install groq
 
       - name: Run Scan
         id: scan
         env:
           CHANGED_FILES: ${{ steps.files.outputs.all_changed_files }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python .github/scripts/compliance_scanner.py
 
       - name: Post Inline Comments
