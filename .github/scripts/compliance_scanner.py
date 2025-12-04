@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
-AI-Powered Compliance Scanner for GitHub Actions
-Uses Google Gemini (FREE) for intelligent code security analysis.
+AI Compliance-as-Code Bot
+=========================
+Shift-left compliance scanner that embeds policy-as-code into your SDLC.
+
+Features:
+- Scans PRs for security/compliance violations
+- Maps findings to SCF, SOC2, HIPAA, PCI-DSS frameworks
+- Provides AI-powered remediation suggestions
+- Comments directly on code lines in PRs
+
+Supports: Java, Python, JavaScript, TypeScript, Terraform, YAML, JSON
+
+Usage: Add this to any repo's .github/scripts/ folder along with the workflow.
 """
 
 import os
@@ -15,16 +26,20 @@ from typing import List, Dict, Any
 
 class AIComplianceScanner:
     """
-    AI-powered code security scanner using Google Gemini.
+    AI-powered compliance scanner using Google Gemini.
     
-    What the AI does:
-    1. Analyzes code for security vulnerabilities
-    2. Maps findings to compliance frameworks (SCF, SOC2, HIPAA, PCI-DSS)
-    3. Provides specific remediation code
-    4. Assesses risk with business impact reasoning
+    SCF Control Mappings:
+    - CPL (Compliance): Policy enforcement and audit evidence
+    - CFG (Configuration Management): Secure configurations
+    - TDA (Technology Development & Acquisition): Secure SDLC
+    - CRY (Cryptography): Encryption and key management
+    - IAC (Identity & Access Control): Least privilege
+    - NET (Network Security): Network configurations
     """
     
-    PROMPT = """You are an expert security code reviewer. Analyze this code for security vulnerabilities.
+    PROMPT = """You are an expert security and compliance code reviewer.
+
+Analyze this code for security vulnerabilities and compliance violations.
 
 FILE: {filepath}
 
@@ -33,126 +48,148 @@ CODE:
 {code}
 ```
 
-Find ALL security issues and return ONLY valid JSON (no markdown):
+Find ALL issues and return ONLY valid JSON (no markdown, no code blocks):
 {{
     "findings": [
         {{
             "title": "Issue title",
             "severity": "critical|high|medium|low",
-            "line": <line number>,
-            "description": "What's wrong",
-            "remediation": "Specific code fix",
-            "scf_control": "SCF control code",
-            "soc2_control": "SOC2 control code"
+            "line": <line number where issue occurs>,
+            "description": "What's wrong and why it's a compliance risk",
+            "remediation": "Specific code fix or configuration change",
+            "scf_control": "SCF control code (e.g., CRY-03, TDA-02, CFG-01)",
+            "soc2_control": "SOC2 control (e.g., CC6.1, CC7.2)",
+            "compliance_frameworks": ["SOC2", "HIPAA", "PCI-DSS"]
         }}
     ],
-    "risk_score": 1-10,
+    "risk_score": <1-10>,
     "executive_summary": "2-3 sentence summary for management"
 }}
 
-Focus on: hardcoded secrets, SQL injection, command injection, weak crypto, insecure deserialization, public cloud resources, overly permissive IAM."""
+COMPLIANCE FOCUS AREAS:
+1. SECRETS (CRY-03): Hardcoded passwords, API keys, tokens, private keys
+2. INJECTION (TDA-02): SQL injection, command injection, XSS
+3. CRYPTO (CRY-01/02): Weak algorithms (MD5, SHA1, DES), missing encryption
+4. ACCESS (IAC-01): Overly permissive IAM, wildcard permissions
+5. NETWORK (NET-01): Open security groups, public resources, 0.0.0.0/0
+6. CONFIG (CFG-01): Debug mode, missing logging, insecure defaults
+7. DATA (DAT-01): Public S3 buckets, unencrypted storage
+
+Return findings for ALL issues found. Be thorough."""
 
     def __init__(self):
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         self.enabled = False
+        self.model_name = "gemini-2.0-flash"
         
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel("gemini-2.0-flash")
+                self.model = genai.GenerativeModel(self.model_name)
                 self.enabled = True
-                print(f"🤖 AI Engine: Google Gemini ({self.model.model_name}) - FREE")
+                print(f"🤖 AI Engine: Google Gemini ({self.model_name}) - FREE")
             except Exception as e:
                 print(f"⚠️ Failed to initialize Gemini: {e}")
         else:
-            print("⚠️ No GEMINI_API_KEY found - AI analysis disabled")
-            print("   Add GEMINI_API_KEY to GitHub Secrets to enable AI")
+            print("⚠️ No GEMINI_API_KEY found")
+            print("   Add GEMINI_API_KEY to repository secrets to enable AI scanning")
 
     def analyze(self, filepath: str, code: str) -> Dict[str, Any]:
-        """Analyze code using AI and return findings."""
+        """Analyze code using AI for compliance violations."""
         if not self.enabled:
             return {"findings": [], "ai_powered": False}
         
         try:
-            prompt = self.PROMPT.format(filepath=filepath, code=code[:8000])
+            prompt = self.PROMPT.format(filepath=filepath, code=code[:10000])
             response = self.model.generate_content(prompt)
             
             # Parse JSON from response
             text = response.text.strip()
+            
             # Remove markdown code blocks if present
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
+            if "```" in text:
+                # Extract content between code blocks
+                parts = text.split("```")
+                for part in parts:
+                    if part.strip().startswith("json"):
+                        text = part.strip()[4:].strip()
+                        break
+                    elif part.strip().startswith("{"):
+                        text = part.strip()
+                        break
             
             result = json.loads(text)
             result["ai_powered"] = True
-            print(f"   🤖 AI found {len(result.get('findings', []))} issues, Risk: {result.get('risk_score', 'N/A')}/10")
+            
+            findings_count = len(result.get("findings", []))
+            risk = result.get("risk_score", "N/A")
+            print(f"   🤖 AI found {findings_count} issues | Risk Score: {risk}/10")
+            
             return result
             
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️ Failed to parse AI response: {e}")
+            print(f"   Raw response: {text[:200]}...")
+            return {"findings": [], "ai_powered": False, "error": str(e)}
         except Exception as e:
             print(f"   ⚠️ AI analysis failed: {e}")
             return {"findings": [], "ai_powered": False, "error": str(e)}
 
 
 # =============================================================================
-# MAIN - GitHub Actions Entry Point
+# MAIN SCANNER
 # =============================================================================
 
 def main():
-    """Scan changed files using AI and report findings."""
+    """Main entry point for GitHub Actions."""
     
-    print("\n" + "="*60)
-    print("🤖 AI COMPLIANCE SCANNER (Powered by Google Gemini)")
-    print("="*60)
+    print("\n" + "="*70)
+    print("🛡️  AI COMPLIANCE-AS-CODE BOT")
+    print("    Shift-left compliance scanning for your SDLC")
+    print("="*70)
     
-    # Initialize AI
+    # Initialize AI scanner
     scanner = AIComplianceScanner()
     
-    # Get changed files from GitHub Actions
+    # Get changed files
     changed_files_env = os.environ.get("CHANGED_FILES", "")
-    print(f"\nCHANGED_FILES env: {changed_files_env[:200]}..." if len(changed_files_env) > 200 else f"\nCHANGED_FILES env: {changed_files_env}")
+    changed_files = changed_files_env.split() if changed_files_env else []
     
-    changed_files = changed_files_env.split()
-    print(f"Files to scan: {len(changed_files)}")
-    
-    # Print all files for debugging
-    for f in changed_files:
-        exists = "✅" if os.path.exists(f) else "❌"
-        print(f"   {exists} {f}")
+    print(f"\n📁 Files to scan: {len(changed_files)}")
     
     if not changed_files:
-        print("No files to scan")
+        print("   No files changed")
         write_output("ALLOW", False)
+        save_report({"decision": "ALLOW", "reason": "No files to scan", "findings": []})
         return
     
-    # Scan each file
+    # File extensions to scan
+    CODE_EXTENSIONS = ('.java', '.py', '.js', '.ts', '.jsx', '.tsx', '.tf', '.yaml', '.yml', '.json', '.xml', '.properties')
+    SKIP_PATHS = ('.github/workflows/', '.github/scripts/', 'node_modules/', 'target/', 'build/', '.git/')
+    
+    # Scan files
     all_findings = []
     risk_scores = []
     summaries = []
-    
-    # Extensions to scan (skip .github workflow files)
-    SCAN_EXTENSIONS = ('.java', '.py', '.js', '.ts', '.tf')
-    SKIP_PATHS = ('.github/workflows/', '.github/scripts/')
+    files_scanned = 0
     
     for filepath in changed_files:
-        # Skip non-existent files
+        # Skip non-existent
         if not os.path.exists(filepath):
-            print(f"\n⚠️ Skipping (not found): {filepath}")
             continue
         
-        # Skip workflow/script files
+        # Skip excluded paths
         if any(skip in filepath for skip in SKIP_PATHS):
-            print(f"\n⏭️ Skipping (workflow/script): {filepath}")
+            print(f"   ⏭️  Skip: {filepath}")
             continue
-            
+        
         # Only scan code files
-        if not filepath.endswith(SCAN_EXTENSIONS):
-            print(f"\n⏭️ Skipping (not code): {filepath}")
+        if not filepath.endswith(CODE_EXTENSIONS):
             continue
         
         print(f"\n📄 Scanning: {filepath}")
+        files_scanned += 1
         
         try:
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -160,7 +197,7 @@ def main():
             
             result = scanner.analyze(filepath, code)
             
-            # Add filepath to each finding
+            # Add filepath to findings
             for finding in result.get("findings", []):
                 finding["file"] = filepath
                 all_findings.append(finding)
@@ -174,27 +211,21 @@ def main():
             print(f"   ❌ Error: {e}")
     
     # Build report
-    report = build_report(all_findings, risk_scores, summaries, scanner.enabled)
+    report = build_report(all_findings, risk_scores, summaries, scanner.enabled, files_scanned)
     
-    # Save report
-    with open("scan_report.json", "w") as f:
-        json.dump(report, f, indent=2)
-    
-    # Print results
+    # Save and output
+    save_report(report)
     print_report(report)
-    
-    # Set GitHub Actions output
-    write_output(report["decision"], len(report["suggestions"]) > 0)
+    write_output(report["decision"], len(report.get("suggestions", [])) > 0)
     
     # Exit with error if blocked
     if report["decision"] == "BLOCK":
         sys.exit(1)
 
 
-def build_report(findings: List[Dict], risk_scores: List, summaries: List, ai_powered: bool) -> Dict:
-    """Build the final report from all findings."""
+def build_report(findings: List[Dict], risk_scores: List, summaries: List, ai_powered: bool, files_scanned: int) -> Dict:
+    """Build compliance report from findings."""
     
-    # Count by severity
     summary = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     blocking = []
     suggestions = []
@@ -208,13 +239,11 @@ def build_report(findings: List[Dict], risk_scores: List, summaries: List, ai_po
         else:
             suggestions.append(f)
     
-    # Determine decision
     decision = "BLOCK" if blocking else "ALLOW"
-    reason = f"Found {len(blocking)} blocking issues" if blocking else "No critical/high issues found"
     
     return {
         "decision": decision,
-        "reason": reason,
+        "reason": f"Found {len(blocking)} blocking issues (critical/high)" if blocking else "No blocking issues",
         "summary": summary,
         "blocking_issues": blocking,
         "suggestions": suggestions,
@@ -222,53 +251,56 @@ def build_report(findings: List[Dict], risk_scores: List, summaries: List, ai_po
         "ai_insights": {
             "risk_score": max(risk_scores) if risk_scores else 0,
             "executive_summary": summaries[0] if summaries else "",
-            "files_analyzed": len(set(f.get("file") for f in findings))
+            "files_scanned": files_scanned,
+            "total_findings": len(findings)
         }
     }
 
 
 def print_report(report: Dict):
-    """Print formatted report to console."""
+    """Print formatted report."""
     
-    print("\n" + "="*60)
-    print("📊 SCAN RESULTS")
-    print("="*60)
+    print("\n" + "="*70)
+    print("📊 COMPLIANCE SCAN RESULTS")
+    print("="*70)
     
-    print(f"\n🎯 Decision: {report['decision']}")
-    print(f"📝 Reason: {report['reason']}")
+    decision_icon = "🚫" if report["decision"] == "BLOCK" else "✅"
+    print(f"\n{decision_icon} Decision: {report['decision']}")
+    print(f"📝 {report['reason']}")
     
     s = report["summary"]
-    print(f"\n📈 Summary:")
+    print(f"\n📈 Findings by Severity:")
     print(f"   🔴 Critical: {s['critical']}")
     print(f"   🟠 High:     {s['high']}")
     print(f"   🟡 Medium:   {s['medium']}")
     print(f"   🔵 Low:      {s['low']}")
     
-    if report.get("ai_powered"):
-        ai = report.get("ai_insights", {})
-        print(f"\n🤖 AI INSIGHTS:")
-        print(f"   Risk Score: {ai.get('risk_score', 0)}/10")
-        if ai.get("executive_summary"):
-            print(f"   Summary: {ai['executive_summary'][:150]}...")
+    ai = report.get("ai_insights", {})
+    print(f"\n🤖 AI Analysis:")
+    print(f"   Risk Score: {ai.get('risk_score', 0)}/10")
+    print(f"   Files Scanned: {ai.get('files_scanned', 0)}")
+    if ai.get("executive_summary"):
+        print(f"   Summary: {ai['executive_summary'][:200]}")
     
     if report["blocking_issues"]:
-        print("\n🚨 BLOCKING ISSUES (Must Fix):")
-        for issue in report["blocking_issues"]:
-            print(f"\n   [{issue['severity'].upper()}] {issue['title']}")
-            print(f"   📁 {issue.get('file', 'unknown')}:{issue.get('line', 0)}")
-            print(f"   📋 {issue.get('description', '')[:100]}")
-            print(f"   ✅ Fix: {issue.get('remediation', '')[:100]}")
+        print(f"\n🚨 BLOCKING ISSUES ({len(report['blocking_issues'])}):")
+        for issue in report["blocking_issues"][:10]:
+            print(f"\n   [{issue.get('severity', 'unknown').upper()}] {issue.get('title', 'Unknown')}")
+            print(f"   📁 {issue.get('file', '?')}:{issue.get('line', '?')}")
+            print(f"   📋 SCF: {issue.get('scf_control', 'N/A')} | SOC2: {issue.get('soc2_control', 'N/A')}")
+            print(f"   ✅ Fix: {issue.get('remediation', 'Review manually')[:100]}")
     
-    if report["suggestions"]:
-        print("\n💡 SUGGESTIONS:")
-        for s in report["suggestions"][:5]:
-            print(f"   - [{s['severity']}] {s['title']} ({s.get('file', '')})")
-    
-    print("\n" + "="*60)
+    print("\n" + "="*70)
+
+
+def save_report(report: Dict):
+    """Save report to JSON file."""
+    with open("scan_report.json", "w") as f:
+        json.dump(report, f, indent=2)
 
 
 def write_output(decision: str, has_suggestions: bool):
-    """Write output for GitHub Actions."""
+    """Write GitHub Actions output."""
     output_file = os.environ.get("GITHUB_OUTPUT")
     if output_file:
         with open(output_file, "a") as f:

@@ -1,7 +1,22 @@
-name: AI Compliance Security Scan
+# =============================================================================
+# AI COMPLIANCE-AS-CODE BOT
+# =============================================================================
+# Shift-left compliance scanner that runs on every PR
+#
+# Features:
+# - AI-powered code analysis (Google Gemini - FREE)
+# - Inline comments on specific code lines
+# - SCF, SOC2, HIPAA, PCI-DSS compliance mapping
+# - Blocks PRs with critical/high severity issues
+#
+# Setup:
+# 1. Add GEMINI_API_KEY to repository secrets
+#    Get free key: https://aistudio.google.com/app/apikey
+# 2. Copy this file to .github/workflows/
+# 3. Copy compliance_scanner.py to .github/scripts/
+# =============================================================================
 
-# Uses Google Gemini (FREE) for AI-powered code security analysis
-# Add GEMINI_API_KEY to repository secrets to enable
+name: AI Compliance Scan
 
 on:
   pull_request:
@@ -11,14 +26,13 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
 
 env:
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
 jobs:
   compliance-scan:
-    name: Security & Compliance Check
+    name: 🛡️ Compliance Check
     runs-on: ubuntu-latest
     
     steps:
@@ -32,39 +46,35 @@ jobs:
         uses: tj-actions/changed-files@v44
         with:
           files: |
+            **/*.java
             **/*.py
             **/*.js
             **/*.ts
-            **/*.java
+            **/*.jsx
+            **/*.tsx
             **/*.tf
             **/*.yaml
             **/*.yml
             **/*.json
+            **/*.xml
+            **/*.properties
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Scanner Dependencies
-        run: |
-          pip install google-generativeai
-
-      - name: Get Scanner from Base Branch
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          git checkout origin/${{ github.base_ref }} -- .github/scripts/compliance_scanner.py
+      - name: Install Dependencies
+        run: pip install google-generativeai
 
       - name: Run AI Compliance Scan
         id: scan
         env:
           CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          echo "🤖 Starting AI-Powered Compliance Scan..."
-          python .github/scripts/compliance_scanner.py
+        run: python .github/scripts/compliance_scanner.py
 
-      # Add inline review comments on specific lines
+      # Add inline comments on specific code lines
       - name: Add Inline Review Comments
         if: always()
         uses: actions/github-script@v7
@@ -85,7 +95,7 @@ jobs:
               return;
             }
             
-            // Get the PR's head SHA for review comments
+            // Get PR info
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -93,26 +103,27 @@ jobs:
             });
             
             const commitId = pr.head.sha;
-            
-            // Create a review with inline comments
             const comments = [];
             
             for (const finding of allFindings) {
               if (!finding.file || !finding.line) continue;
               
-              const severity = (finding.severity || 'info').toUpperCase();
-              const emoji = severity === 'CRITICAL' ? '🔴' : 
-                           severity === 'HIGH' ? '🟠' : 
-                           severity === 'MEDIUM' ? '🟡' : '🔵';
+              const sev = (finding.severity || 'info').toUpperCase();
+              const emoji = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
               
-              let body = `## ${emoji} ${severity}: ${finding.title}\n\n`;
-              body += `**📋 Description:** ${finding.description || 'Security issue detected'}\n\n`;
-              body += `**✅ Remediation:** ${finding.remediation || 'Review and fix this issue'}\n\n`;
+              let body = `## ${emoji} ${sev}: ${finding.title}\n\n`;
+              body += `**📋 Issue:** ${finding.description || 'Security/compliance issue detected'}\n\n`;
+              body += `**✅ Fix:** ${finding.remediation || 'Review and fix this issue'}\n\n`;
               
-              if (finding.scf_control) {
-                body += `**📊 Compliance:** SCF ${finding.scf_control}`;
+              if (finding.scf_control || finding.soc2_control) {
+                body += `**📊 Compliance:**`;
+                if (finding.scf_control) body += ` SCF ${finding.scf_control}`;
                 if (finding.soc2_control) body += ` | SOC2 ${finding.soc2_control}`;
                 body += `\n\n`;
+              }
+              
+              if (finding.compliance_frameworks && finding.compliance_frameworks.length > 0) {
+                body += `**🏛️ Frameworks:** ${finding.compliance_frameworks.join(', ')}\n\n`;
               }
               
               body += `---\n*🤖 AI Compliance Bot*`;
@@ -132,70 +143,53 @@ jobs:
                   pull_number: context.issue.number,
                   commit_id: commitId,
                   event: report.decision === 'BLOCK' ? 'REQUEST_CHANGES' : 'COMMENT',
-                  body: `## 🤖 AI Compliance Scan Complete\n\n**Decision:** ${report.decision}\n**Risk Score:** ${report.ai_insights?.risk_score || 'N/A'}/10\n\nSee inline comments for details.`,
-                  comments: comments
+                  body: `## 🛡️ AI Compliance Scan Complete\n\n**Decision:** ${report.decision}\n**Risk Score:** ${report.ai_insights?.risk_score || 0}/10\n**Files Scanned:** ${report.ai_insights?.files_scanned || 0}\n\n${report.decision === 'BLOCK' ? '⚠️ Please fix the issues marked in the code review.' : '✅ No blocking issues found.'}`,
+                  comments: comments.slice(0, 50)  // GitHub limits to 50 comments per review
                 });
                 console.log(`Created review with ${comments.length} inline comments`);
               } catch (e) {
-                console.log('Failed to create review:', e.message);
-                // Fallback: create individual comments
-                for (const c of comments) {
-                  try {
-                    await github.rest.pulls.createReviewComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      pull_number: context.issue.number,
-                      commit_id: commitId,
-                      path: c.path,
-                      line: c.line,
-                      body: c.body
-                    });
-                  } catch (e2) {
-                    console.log(`Failed to comment on ${c.path}:${c.line}:`, e2.message);
-                  }
-                }
+                console.log('Review creation failed:', e.message);
               }
             }
 
-      - name: Comment PR - Summary
+      # Summary comment on PR
+      - name: Post Summary Comment
         if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             
-            if (!fs.existsSync('scan_report.json')) {
-              return;
-            }
+            if (!fs.existsSync('scan_report.json')) return;
             
             const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            const s = report.summary || {};
+            const ai = report.ai_insights || {};
             
             let comment = report.decision === 'BLOCK' 
               ? `## 🚫 Compliance Check Failed\n\n`
               : `## ✅ Compliance Check Passed\n\n`;
             
             comment += `| Severity | Count |\n|----------|-------|\n`;
-            comment += `| 🔴 Critical | ${report.summary?.critical || 0} |\n`;
-            comment += `| 🟠 High | ${report.summary?.high || 0} |\n`;
-            comment += `| 🟡 Medium | ${report.summary?.medium || 0} |\n`;
-            comment += `| 🔵 Low | ${report.summary?.low || 0} |\n\n`;
+            comment += `| 🔴 Critical | ${s.critical || 0} |\n`;
+            comment += `| 🟠 High | ${s.high || 0} |\n`;
+            comment += `| 🟡 Medium | ${s.medium || 0} |\n`;
+            comment += `| 🔵 Low | ${s.low || 0} |\n\n`;
             
-            if (report.ai_powered && report.ai_insights) {
-              comment += `### 🤖 AI Analysis\n`;
-              comment += `- **Risk Score:** ${report.ai_insights.risk_score || 0}/10\n`;
-              if (report.ai_insights.executive_summary) {
-                comment += `- **Summary:** ${report.ai_insights.executive_summary}\n`;
-              }
-              comment += `\n`;
+            comment += `### 🤖 AI Analysis\n`;
+            comment += `- **Risk Score:** ${ai.risk_score || 0}/10\n`;
+            comment += `- **Files Scanned:** ${ai.files_scanned || 0}\n`;
+            if (ai.executive_summary) {
+              comment += `- **Summary:** ${ai.executive_summary}\n`;
             }
             
             if (report.decision === 'BLOCK') {
-              comment += `⚠️ **See inline comments on specific lines for details and fixes.**\n\n`;
+              comment += `\n⚠️ **See inline comments on code for specific issues and fixes.**\n`;
             }
             
-            comment += `---\n*🤖 AI Compliance-as-Code Bot | Powered by Google Gemini*`;
+            comment += `\n---\n*🤖 AI Compliance-as-Code Bot | Powered by Google Gemini*`;
             
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -205,10 +199,5 @@ jobs:
       - name: Fail if Blocked
         if: steps.scan.outputs.decision == 'BLOCK'
         run: |
-          echo "::error::PR blocked due to security/compliance violations"
+          echo "::error::PR blocked due to compliance violations"
           exit 1
-
-# AI (Google Gemini) analyzes code for:
-# - Security vulnerabilities (secrets, injection, crypto)
-# - Compliance mapping (SCF, SOC2, HIPAA, PCI-DSS)
-# - Risk scoring and remediation suggestions
