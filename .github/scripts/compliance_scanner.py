@@ -111,8 +111,16 @@ def main():
     scanner = AIComplianceScanner()
     
     # Get changed files from GitHub Actions
-    changed_files = os.environ.get("CHANGED_FILES", "").split()
-    print(f"\nFiles to scan: {len(changed_files)}")
+    changed_files_env = os.environ.get("CHANGED_FILES", "")
+    print(f"\nCHANGED_FILES env: {changed_files_env[:200]}..." if len(changed_files_env) > 200 else f"\nCHANGED_FILES env: {changed_files_env}")
+    
+    changed_files = changed_files_env.split()
+    print(f"Files to scan: {len(changed_files)}")
+    
+    # Print all files for debugging
+    for f in changed_files:
+        exists = "✅" if os.path.exists(f) else "❌"
+        print(f"   {exists} {f}")
     
     if not changed_files:
         print("No files to scan")
@@ -124,12 +132,24 @@ def main():
     risk_scores = []
     summaries = []
     
+    # Extensions to scan (skip .github workflow files)
+    SCAN_EXTENSIONS = ('.java', '.py', '.js', '.ts', '.tf')
+    SKIP_PATHS = ('.github/workflows/', '.github/scripts/')
+    
     for filepath in changed_files:
+        # Skip non-existent files
         if not os.path.exists(filepath):
+            print(f"\n⚠️ Skipping (not found): {filepath}")
+            continue
+        
+        # Skip workflow/script files
+        if any(skip in filepath for skip in SKIP_PATHS):
+            print(f"\n⏭️ Skipping (workflow/script): {filepath}")
             continue
             
         # Only scan code files
-        if not filepath.endswith(('.py', '.js', '.ts', '.java', '.tf', '.yaml', '.yml', '.json')):
+        if not filepath.endswith(SCAN_EXTENSIONS):
+            print(f"\n⏭️ Skipping (not code): {filepath}")
             continue
         
         print(f"\n📄 Scanning: {filepath}")
