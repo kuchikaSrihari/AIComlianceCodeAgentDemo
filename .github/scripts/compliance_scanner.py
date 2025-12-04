@@ -644,7 +644,29 @@ def main():
     
     # File extensions to scan
     CODE_EXTENSIONS = ('.java', '.py', '.js', '.ts', '.jsx', '.tsx', '.tf', '.yaml', '.yml', '.json', '.xml', '.properties')
-    SKIP_PATHS = ('.github/workflows/', '.github/scripts/', 'node_modules/', 'target/', 'build/', '.git/')
+    SKIP_PATHS = ('.github/', 'node_modules/', 'target/', 'build/', '.git/', '__pycache__/', 'test-samples/dependencies/')
+    
+    # OPTIMIZATION: Limit max files to prevent long scans
+    MAX_FILES = 10
+    
+    # Filter files first
+    files_to_scan = []
+    for filepath in changed_files:
+        if not os.path.exists(filepath):
+            continue
+        if any(skip in filepath for skip in SKIP_PATHS):
+            print(f"   ⏭️  Skip: {filepath}")
+            continue
+        if not filepath.endswith(CODE_EXTENSIONS):
+            continue
+        files_to_scan.append(filepath)
+    
+    # Limit files
+    if len(files_to_scan) > MAX_FILES:
+        print(f"   ⚠️  Limiting scan to {MAX_FILES} files (found {len(files_to_scan)})")
+        files_to_scan = files_to_scan[:MAX_FILES]
+    
+    print(f"   📊 Will scan: {len(files_to_scan)} files")
     
     # Scan files
     all_findings = []
@@ -652,21 +674,8 @@ def main():
     summaries = []
     files_scanned = 0
     
-    for filepath in changed_files:
-        # Skip non-existent
-        if not os.path.exists(filepath):
-            continue
-        
-        # Skip excluded paths
-        if any(skip in filepath for skip in SKIP_PATHS):
-            print(f"   ⏭️  Skip: {filepath}")
-            continue
-        
-        # Only scan code files
-        if not filepath.endswith(CODE_EXTENSIONS):
-            continue
-        
-        print(f"\n📄 Scanning: {filepath}")
+    for filepath in files_to_scan:
+        print(f"\n📄 [{files_scanned + 1}/{len(files_to_scan)}] Scanning: {filepath}")
         files_scanned += 1
         
         try:
