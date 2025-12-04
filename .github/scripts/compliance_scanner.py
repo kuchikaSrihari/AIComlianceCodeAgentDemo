@@ -297,7 +297,7 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
         """
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         self.enabled = False
-        self.model_name = "models/gemini-1.5-flash-latest"  # Full model path
+        self.model_name = "gemini-2.0-flash-exp"  # Working model - needs quota
         self.genai = None
         self.scan_stats = {"files": 0, "findings": 0, "time_ms": 0}
         
