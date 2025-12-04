@@ -17,7 +17,7 @@ jobs:
   compliance-scan:
     name: Security & Compliance Check
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -46,6 +46,11 @@ jobs:
       - name: Install Scanner
         run: |
           pip install requests pyyaml
+
+      - name: Get Scanner from Base Branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git checkout origin/${{ github.base_ref }} -- .github/scripts/compliance_scanner.py
 
       - name: Run Compliance Scan
         id: scan
