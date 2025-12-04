@@ -1,14 +1,22 @@
-name: AI Compliance Security Scan
-
 # =============================================================================
-# AI-POWERED COMPLIANCE SCANNER
+# AI COMPLIANCE-AS-CODE BOT
 # =============================================================================
-# This workflow uses a HYBRID approach:
-# 1. RULE-BASED: Fast regex patterns for known vulnerabilities
-# 2. AI/LLM: OpenAI GPT for contextual analysis (optional, requires API key)
+# Shift-left compliance scanner that runs on every PR
 #
-# To enable AI features, add OPENAI_API_KEY to repository secrets
+# Features:
+# - AI-powered code analysis (Google Gemini - FREE)
+# - Inline comments on specific code lines
+# - SCF, SOC2, HIPAA, PCI-DSS compliance mapping
+# - Blocks PRs with critical/high severity issues
+#
+# Setup:
+# 1. Add GEMINI_API_KEY to repository secrets
+#    Get free key: https://aistudio.google.com/app/apikey
+# 2. Copy this file to .github/workflows/
+# 3. Copy compliance_scanner.py to .github/scripts/
 # =============================================================================
+
+name: AI Compliance Scan
 
 on:
   pull_request:
@@ -18,18 +26,13 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
 
 env:
-  COMPLIANCE_API_URL: ${{ secrets.COMPLIANCE_API_URL || 'http://localhost:8000' }}
-  # AI Configuration
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  AI_MODEL: ${{ vars.AI_MODEL || 'gpt-4o-mini' }}  # Cost-effective default
-  ENABLE_AI: ${{ vars.ENABLE_AI || 'true' }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
 jobs:
   compliance-scan:
-    name: Security & Compliance Check
+    name: 🛡️ Compliance Check
     runs-on: ubuntu-latest
     
     steps:
@@ -43,175 +46,158 @@ jobs:
         uses: tj-actions/changed-files@v44
         with:
           files: |
+            **/*.java
             **/*.py
             **/*.js
             **/*.ts
-            **/*.java
+            **/*.jsx
+            **/*.tsx
             **/*.tf
             **/*.yaml
             **/*.yml
             **/*.json
+            **/*.xml
+            **/*.properties
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Scanner Dependencies
-        run: |
-          pip install requests pyyaml openai
-
-      - name: Get Scanner from Base Branch
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          git checkout origin/${{ github.base_ref }} -- .github/scripts/compliance_scanner.py
+      - name: Install Dependencies
+        run: pip install google-generativeai
 
       - name: Run AI Compliance Scan
         id: scan
         env:
           CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          # AI environment variables are inherited from job env
-        run: |
-          echo "🤖 Starting AI-Powered Compliance Scan..."
-          echo "AI Enabled: ${{ env.OPENAI_API_KEY && 'Yes' || 'No (add OPENAI_API_KEY secret)' }}"
-          python .github/scripts/compliance_scanner.py
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python .github/scripts/compliance_scanner.py
 
-      - name: Comment PR - Blocking Issues
-        if: steps.scan.outputs.decision == 'BLOCK'
+      # Add inline comments on specific code lines
+      - name: Add Inline Review Comments
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            
+            if (!fs.existsSync('scan_report.json')) {
+              console.log('No scan report found');
+              return;
+            }
+            
             const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            const allFindings = [...(report.blocking_issues || []), ...(report.suggestions || [])];
             
-            let comment = `## 🚫 Compliance Check Failed\n\n`;
-            comment += `**Decision:** ${report.decision}\n`;
-            comment += `**Reason:** ${report.reason}\n\n`;
+            if (allFindings.length === 0) {
+              console.log('No findings to comment on');
+              return;
+            }
             
-            comment += `### Summary\n`;
+            // Get PR info
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            const commitId = pr.head.sha;
+            const comments = [];
+            
+            for (const finding of allFindings) {
+              if (!finding.file || !finding.line) continue;
+              
+              const sev = (finding.severity || 'info').toUpperCase();
+              const emoji = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
+              
+              let body = `## ${emoji} ${sev}: ${finding.title}\n\n`;
+              body += `**📋 Issue:** ${finding.description || 'Security/compliance issue detected'}\n\n`;
+              body += `**✅ Fix:** ${finding.remediation || 'Review and fix this issue'}\n\n`;
+              
+              if (finding.scf_control || finding.soc2_control) {
+                body += `**📊 Compliance:**`;
+                if (finding.scf_control) body += ` SCF ${finding.scf_control}`;
+                if (finding.soc2_control) body += ` | SOC2 ${finding.soc2_control}`;
+                body += `\n\n`;
+              }
+              
+              if (finding.compliance_frameworks && finding.compliance_frameworks.length > 0) {
+                body += `**🏛️ Frameworks:** ${finding.compliance_frameworks.join(', ')}\n\n`;
+              }
+              
+              body += `---\n*🤖 AI Compliance Bot*`;
+              
+              comments.push({
+                path: finding.file,
+                line: parseInt(finding.line) || 1,
+                body: body
+              });
+            }
+            
+            if (comments.length > 0) {
+              try {
+                await github.rest.pulls.createReview({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  commit_id: commitId,
+                  event: report.decision === 'BLOCK' ? 'REQUEST_CHANGES' : 'COMMENT',
+                  body: `## 🛡️ AI Compliance Scan Complete\n\n**Decision:** ${report.decision}\n**Risk Score:** ${report.ai_insights?.risk_score || 0}/10\n**Files Scanned:** ${report.ai_insights?.files_scanned || 0}\n\n${report.decision === 'BLOCK' ? '⚠️ Please fix the issues marked in the code review.' : '✅ No blocking issues found.'}`,
+                  comments: comments.slice(0, 50)  // GitHub limits to 50 comments per review
+                });
+                console.log(`Created review with ${comments.length} inline comments`);
+              } catch (e) {
+                console.log('Review creation failed:', e.message);
+              }
+            }
+
+      # Summary comment on PR
+      - name: Post Summary Comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            if (!fs.existsSync('scan_report.json')) return;
+            
+            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            const s = report.summary || {};
+            const ai = report.ai_insights || {};
+            
+            let comment = report.decision === 'BLOCK' 
+              ? `## 🚫 Compliance Check Failed\n\n`
+              : `## ✅ Compliance Check Passed\n\n`;
+            
             comment += `| Severity | Count |\n|----------|-------|\n`;
-            comment += `| 🔴 Critical | ${report.summary.critical} |\n`;
-            comment += `| 🟠 High | ${report.summary.high} |\n`;
-            comment += `| 🟡 Medium | ${report.summary.medium} |\n`;
-            comment += `| 🔵 Low | ${report.summary.low} |\n\n`;
+            comment += `| 🔴 Critical | ${s.critical || 0} |\n`;
+            comment += `| 🟠 High | ${s.high || 0} |\n`;
+            comment += `| 🟡 Medium | ${s.medium || 0} |\n`;
+            comment += `| 🔵 Low | ${s.low || 0} |\n\n`;
             
-            // AI Insights section
-            if (report.ai_powered && report.ai_insights) {
-              comment += `### 🤖 AI Analysis\n`;
-              if (report.ai_insights.risk_score) {
-                comment += `- **Risk Score:** ${report.ai_insights.risk_score}/10\n`;
-              }
-              if (report.ai_insights.false_positives_filtered > 0) {
-                comment += `- **False Positives Filtered:** ${report.ai_insights.false_positives_filtered}\n`;
-              }
-              if (report.ai_insights.executive_summary) {
-                comment += `- **Summary:** ${report.ai_insights.executive_summary}\n`;
-              }
-              comment += `\n`;
+            comment += `### 🤖 AI Analysis\n`;
+            comment += `- **Risk Score:** ${ai.risk_score || 0}/10\n`;
+            comment += `- **Files Scanned:** ${ai.files_scanned || 0}\n`;
+            if (ai.executive_summary) {
+              comment += `- **Summary:** ${ai.executive_summary}\n`;
             }
             
-            if (report.blocking_issues.length > 0) {
-              comment += `### 🚨 Blocking Issues (Must Fix)\n\n`;
-              for (const issue of report.blocking_issues) {
-                comment += `#### ${issue.severity}: ${issue.title}\n`;
-                comment += `- **File:** \`${issue.file}:${issue.line}\`\n`;
-                comment += `- **SCF Control:** ${issue.scf_control}\n`;
-                comment += `- **SOC2:** ${issue.soc2_control}\n`;
-                comment += `- **Description:** ${issue.description}\n`;
-                comment += `- **Remediation:** ${issue.remediation}\n`;
-                if (issue.ai_reasoning) {
-                  comment += `- **🤖 AI Analysis:** ${issue.ai_reasoning}\n`;
-                }
-                comment += `\n`;
-              }
+            if (report.decision === 'BLOCK') {
+              comment += `\n⚠️ **See inline comments on code for specific issues and fixes.**\n`;
             }
             
-            if (report.suggestions.length > 0) {
-              comment += `### 💡 Suggestions (Recommended)\n\n`;
-              for (const sug of report.suggestions.slice(0, 5)) {
-                comment += `- **${sug.title}** (\`${sug.file}\`): ${sug.remediation}\n`;
-              }
-            }
+            comment += `\n---\n*🤖 AI Compliance-as-Code Bot | Powered by Google Gemini*`;
             
-            const aiStatus = report.ai_powered ? '🤖 AI-Enhanced' : '📋 Rule-Based';
-            comment += `\n---\n*${aiStatus} | AI Compliance-as-Code Bot | SCF + SOC2 Mapped*`;
-            
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: comment
-            });
-
-      - name: Comment PR - Passed with Suggestions
-        if: steps.scan.outputs.decision == 'ALLOW' && steps.scan.outputs.has_suggestions == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
-            
-            let comment = `## ✅ Compliance Check Passed\n\n`;
-            comment += `No blocking issues found.\n\n`;
-            
-            if (report.suggestions.length > 0) {
-              comment += `### 💡 Suggestions for Improvement\n\n`;
-              for (const sug of report.suggestions) {
-                comment += `- **${sug.title}** (\`${sug.file}:${sug.line}\`)\n`;
-                comment += `  - ${sug.remediation}\n`;
-              }
-            }
-            
-            comment += `\n---\n*AI Compliance-as-Code Bot*`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-
-      - name: Comment PR - All Clear
-        if: steps.scan.outputs.decision == 'ALLOW' && steps.scan.outputs.has_suggestions != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '## ✅ Compliance Check Passed\n\nNo security or compliance issues detected.\n\n---\n*🤖 AI Compliance-as-Code Bot*'
             });
 
       - name: Fail if Blocked
         if: steps.scan.outputs.decision == 'BLOCK'
         run: |
-          echo "::error::PR blocked due to security/compliance violations"
+          echo "::error::PR blocked due to compliance violations"
           exit 1
-
-# =============================================================================
-# HOW AI IS USED IN THIS WORKFLOW
-# =============================================================================
-# 
-# 1. RULE-BASED DETECTION (Always runs):
-#    - Fast regex pattern matching for known vulnerability signatures
-#    - Hardcoded secrets, SQL injection, command injection, etc.
-#    - Deterministic: same input = same output
-#
-# 2. AI/LLM ANALYSIS (When OPENAI_API_KEY is set):
-#    - Contextual code understanding beyond pattern matching
-#    - False positive reduction using semantic analysis
-#    - AI-generated remediation code suggestions
-#    - Risk scoring with business impact reasoning
-#    - Compliance gap analysis across frameworks (SOC2, HIPAA, PCI-DSS)
-#
-# 3. HYBRID MERGE:
-#    - AI validates rule-based findings (true/false positive)
-#    - AI can adjust severity based on context
-#    - AI discovers additional issues not caught by rules
-#    - Final report combines both for best accuracy
-#
-# To enable AI: Add OPENAI_API_KEY to repository Settings > Secrets
-# =============================================================================
