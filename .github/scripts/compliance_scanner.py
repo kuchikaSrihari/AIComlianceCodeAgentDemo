@@ -217,10 +217,16 @@ class AIComplianceScanner:
     - SCF-GRC-14: Remediation SLAs
     """
     
-    # Concise system prompt for fast responses
-    SYSTEM_PROMPT = """You are a security code reviewer. Analyze code for vulnerabilities.
-Provide findings with: title, severity, line number, OWASP category, CWE, CVSS score, and fix.
-Be concise. Output valid JSON only."""
+    # Balanced system prompt - quality + speed
+    SYSTEM_PROMPT = """You are SecureFlow AI, an expert security code reviewer.
+
+Your expertise:
+- OWASP Top 10 & CWE Top 25 vulnerabilities
+- CVSS 3.1 scoring
+- SCF, SOC2, HIPAA, PCI-DSS compliance
+- Secure coding best practices
+
+Analyze code thoroughly but respond quickly. Output valid JSON only."""
 
     ANALYSIS_PROMPT = """Analyze this {file_type} file for security vulnerabilities.
 
@@ -230,27 +236,37 @@ FILE: {filepath}
 {code}
 ```
 
-Return JSON only (no markdown):
+CHECK FOR:
+- Hardcoded secrets/API keys (CWE-798)
+- SQL/Command injection (CWE-89, CWE-78)
+- XSS vulnerabilities (CWE-79)
+- Insecure deserialization (CWE-502)
+- Broken access control/IDOR (CWE-639)
+- Security misconfigurations
+- Vulnerable dependencies (Log4j, etc.)
+- Weak cryptography (CWE-327)
+- Missing authentication/authorization
+
+Return JSON only:
 {{
   "findings": [
     {{
-      "title": "Issue title",
+      "title": "Clear issue title",
       "severity": "critical|high|medium|low",
-      "line": 1,
-      "description": "What's wrong",
-      "owasp_category": "A01-A10",
+      "line": <line number>,
+      "description": "Technical explanation",
+      "business_impact": "Business risk",
+      "owasp_category": "A01:2021-Broken Access Control",
       "cwe_id": "CWE-XXX",
-      "cvss_score": 7.5,
-      "scf_control": "Control ID",
+      "cvss_score": <0.0-10.0>,
+      "scf_control": "SCF control ID",
       "remediation": "How to fix",
-      "code_fix": "Fixed code"
+      "code_fix": "Corrected code snippet"
     }}
   ],
-  "risk_score": 5,
-  "executive_summary": "Brief summary"
-}}
-
-Check for: hardcoded secrets, SQL injection, XSS, insecure config, weak crypto, missing auth, IDOR, known CVEs."""
+  "risk_score": <1-10>,
+  "executive_summary": "2-sentence summary for executives"
+}}"""
 
     # File type to language mapping for syntax highlighting
     LANG_MAP = {
@@ -286,7 +302,7 @@ Check for: hardcoded secrets, SQL injection, XSS, insecure config, weak crypto, 
         """
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         self.enabled = False
-        self.model_name = "gemini-2.0-flash"
+        self.model_name = "gemini-1.5-flash"  # Faster than 2.0 for CI/CD
         self.genai = None
         self.scan_stats = {"files": 0, "findings": 0, "time_ms": 0}
         
@@ -303,7 +319,7 @@ Check for: hardcoded secrets, SQL injection, XSS, insecure config, weak crypto, 
                     "temperature": 0.1,      # Precise, consistent analysis
                     "top_p": 0.95,           # Balanced creativity for edge cases
                     "top_k": 40,             # Focused token selection
-                    "max_output_tokens": 8192,  # Room for detailed findings
+                    "max_output_tokens": 4096,  # Balanced output size
                 }
                 
                 # Safety settings optimized for security content analysis
@@ -326,7 +342,7 @@ Check for: hardcoded secrets, SQL injection, XSS, insecure config, weak crypto, 
                 print("╔══════════════════════════════════════════════════════════════╗")
                 print("║          🤖 AI COMPLIANCE ENGINE INITIALIZED                 ║")
                 print("╠══════════════════════════════════════════════════════════════╣")
-                print(f"║  Model: Google Gemini 2.0 Flash                              ║")
+                print(f"║  Model: Google Gemini 1.5 Flash                              ║")
                 print(f"║  Mode:  Enterprise Security Analysis                         ║")
                 print(f"║  Temp:  0.1 (High precision)                                 ║")
                 print("╠══════════════════════════════════════════════════════════════╣")
