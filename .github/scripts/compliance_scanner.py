@@ -217,56 +217,51 @@ class AIComplianceScanner:
     - SCF-GRC-14: Remediation SLAs
     """
     
-    # Balanced system prompt - quality + speed
-    SYSTEM_PROMPT = """You are SecureFlow AI, an expert security code reviewer.
+    # System prompt for security analysis
+    SYSTEM_PROMPT = """You are SecureFlow AI, a security code analyzer. Find ALL vulnerabilities. Be thorough. Output JSON only."""
 
-Your expertise:
-- OWASP Top 10 & CWE Top 25 vulnerabilities
-- CVSS 3.1 scoring
-- SCF, SOC2, HIPAA, PCI-DSS compliance
-- Secure coding best practices
-
-Analyze code thoroughly but respond quickly. Output valid JSON only."""
-
-    ANALYSIS_PROMPT = """Analyze this {file_type} file for security vulnerabilities.
-
-FILE: {filepath}
+    ANALYSIS_PROMPT = """SECURITY SCAN: {filepath}
 
 ```{lang}
 {code}
 ```
 
-CHECK FOR:
-- Hardcoded secrets/API keys (CWE-798)
-- SQL/Command injection (CWE-89, CWE-78)
-- XSS vulnerabilities (CWE-79)
-- Insecure deserialization (CWE-502)
-- Broken access control/IDOR (CWE-639)
-- Security misconfigurations
-- Vulnerable dependencies (Log4j, etc.)
-- Weak cryptography (CWE-327)
-- Missing authentication/authorization
+FIND ALL security issues. For each issue found, you MUST include it in findings.
 
-Return JSON only:
+CRITICAL CHECKS:
+1. Hardcoded passwords/API keys/secrets → severity: critical
+2. SQL injection (string concatenation in queries) → severity: critical  
+3. Command injection → severity: critical
+4. Insecure deserialization → severity: high
+5. XSS vulnerabilities → severity: high
+6. Missing authentication → severity: high
+7. IDOR/broken access control → severity: high
+8. Weak cryptography (MD5, SHA1, DES) → severity: medium
+9. Information disclosure → severity: medium
+10. Missing input validation → severity: medium
+
+Return ONLY valid JSON (no markdown, no explanation):
 {{
   "findings": [
     {{
-      "title": "Clear issue title",
-      "severity": "critical|high|medium|low",
-      "line": <line number>,
-      "description": "Technical explanation",
-      "business_impact": "Business risk",
-      "owasp_category": "A01:2021-Broken Access Control",
-      "cwe_id": "CWE-XXX",
-      "cvss_score": <0.0-10.0>,
-      "scf_control": "SCF control ID",
-      "remediation": "How to fix",
-      "code_fix": "Corrected code snippet"
+      "title": "Specific issue name",
+      "severity": "critical",
+      "line": 10,
+      "description": "What is wrong",
+      "business_impact": "What attacker can do",
+      "owasp_category": "A03:2021-Injection",
+      "cwe_id": "CWE-89",
+      "cvss_score": 9.8,
+      "scf_control": "TDA-02",
+      "remediation": "How to fix it",
+      "code_fix": "Fixed code"
     }}
   ],
-  "risk_score": <1-10>,
-  "executive_summary": "2-sentence summary for executives"
-}}"""
+  "risk_score": 8,
+  "executive_summary": "Summary of findings"
+}}
+
+If code has vulnerabilities, findings array MUST NOT be empty."""
 
     # File type to language mapping for syntax highlighting
     LANG_MAP = {
