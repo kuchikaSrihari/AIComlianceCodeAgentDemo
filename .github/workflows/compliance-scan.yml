@@ -55,8 +55,7 @@ jobs:
             }
             console.log(`Deleted ${deleted} old summary comments`);
             
-            // Also delete old review BODIES (the "suggested changes" headers)
-            // but this keeps the inline comments on specific lines
+            // Only dismiss CHANGES_REQUESTED reviews (not already dismissed or commented)
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -64,9 +63,9 @@ jobs:
             });
             
             for (const review of reviews) {
-              if (review.user?.login === 'github-actions[bot]' && review.state !== 'PENDING') {
+              // Only dismiss if: bot review AND state is CHANGES_REQUESTED (dismissable)
+              if (review.user?.login === 'github-actions[bot]' && review.state === 'CHANGES_REQUESTED') {
                 try {
-                  // Dismiss old reviews to clean up "suggested changes" messages
                   await github.rest.pulls.dismissReview({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
