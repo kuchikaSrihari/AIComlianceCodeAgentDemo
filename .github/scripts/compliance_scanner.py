@@ -674,15 +674,32 @@ def main():
     summaries = []
     files_scanned = 0
     
+    import signal
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("File scan timed out")
+    
     for filepath in files_to_scan:
         print(f"\n📄 [{files_scanned + 1}/{len(files_to_scan)}] Scanning: {filepath}")
         files_scanned += 1
         
         try:
+            # Set 30 second timeout per file
+            try:
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)
+            except:
+                pass  # Windows doesn't support SIGALRM
+            
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 code = f.read()
             
             result = scanner.analyze(filepath, code)
+            
+            try:
+                signal.alarm(0)  # Cancel timeout
+            except:
+                pass
             
             # Add filepath to findings
             for finding in result.get("findings", []):
@@ -693,7 +710,9 @@ def main():
                 risk_scores.append(result["risk_score"])
             if result.get("executive_summary"):
                 summaries.append(result["executive_summary"])
-                
+        
+        except TimeoutError:
+            print(f"   ⏱️ TIMEOUT - skipping file")
         except Exception as e:
             print(f"   ❌ Error: {e}")
     
