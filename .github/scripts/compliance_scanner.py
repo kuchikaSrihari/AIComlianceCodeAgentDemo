@@ -555,8 +555,8 @@ Think step-by-step:
             import time
             start_time = time.time()
             
-            # Optimize: Limit code size for faster analysis (8K chars is enough)
-            code_truncated = code[:8000] if len(code) > 8000 else code
+            # Optimize: Limit code size for faster analysis (5K chars for speed)
+            code_truncated = code[:5000] if len(code) > 5000 else code
             
             # Build the analysis prompt
             prompt = self.ANALYSIS_PROMPT.format(

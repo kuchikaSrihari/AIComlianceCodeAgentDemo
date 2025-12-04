@@ -120,28 +120,23 @@ jobs:
               pull_number: context.issue.number
             });
             
-            // Build CONCISE inline comments (limit to top 10 most critical)
-            // Sort by severity: critical > high > medium > low
-            const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-            findings.sort((a, b) => (severityOrder[a.severity] || 3) - (severityOrder[b.severity] || 3));
-            
+            // ONLY post inline comments for CRITICAL and HIGH severity
             const comments = [];
-            const MAX_INLINE = 10;  // Limit inline comments to avoid spam
             
-            for (const f of findings.slice(0, MAX_INLINE)) {
+            for (const f of findings) {
+              const sev = (f.severity || 'low').toLowerCase();
+              if (sev !== 'critical' && sev !== 'high') continue;  // Skip medium/low
               if (!f.file || !f.line) continue;
               
-              const sev = (f.severity || 'low').toUpperCase();
-              const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
+              const icon = sev === 'critical' ? '🔴' : '🟠';
               
-              // CONCISE format - key info only
-              let body = `**${icon} ${sev}:** ${f.title}\n\n`;
-              body += `**CVSS:** ${f.cvss_score || 'N/A'} | **OWASP:** ${f.owasp_category || 'N/A'} | **CWE:** ${f.cwe_id || 'N/A'}\n\n`;
-              body += `${f.description || 'Security issue detected'}\n\n`;
-              body += `**Fix:** ${f.remediation || 'Review and fix'}\n`;
+              // CONCISE inline comment
+              let body = `**${icon} ${sev.toUpperCase()}:** ${f.title}\n\n`;
+              body += `CVSS: ${f.cvss_score || 'N/A'} | ${f.owasp_category || ''} | ${f.cwe_id || ''}\n\n`;
+              body += `**Fix:** ${f.remediation || 'Review and fix'}`;
               
               if (f.code_fix) {
-                body += `\n<details><summary>📝 Code Fix</summary>\n\n\`\`\`\n${f.code_fix}\n\`\`\`\n</details>`;
+                body += `\n\n\`\`\`\n${f.code_fix}\n\`\`\``;
               }
               
               comments.push({
@@ -235,7 +230,30 @@ jobs:
               summary += `\n`;
             }
             
-            summary += `📍 **See inline comments on code for detailed findings and fixes**\n\n`;
+            // Add MEDIUM/LOW findings to summary (not inline)
+            const mediumLow = findings.filter(f => 
+              f.severity?.toLowerCase() === 'medium' || f.severity?.toLowerCase() === 'low'
+            );
+            
+            if (mediumLow.length > 0) {
+              summary += `### 📝 Additional Findings (Medium/Low)\n\n`;
+              summary += `<details><summary>Click to expand ${mediumLow.length} findings</summary>\n\n`;
+              summary += `| Severity | File | Line | Issue | Fix |\n`;
+              summary += `|----------|------|------|-------|-----|\n`;
+              mediumLow.slice(0, 20).forEach(f => {
+                const icon = f.severity?.toLowerCase() === 'medium' ? '🟡' : '🔵';
+                const file = f.file?.split('/').pop() || 'N/A';
+                const title = (f.title || '').substring(0, 40);
+                const fix = (f.remediation || '').substring(0, 50);
+                summary += `| ${icon} ${f.severity} | ${file} | ${f.line || '-'} | ${title} | ${fix} |\n`;
+              });
+              if (mediumLow.length > 20) {
+                summary += `\n*...and ${mediumLow.length - 20} more*\n`;
+              }
+              summary += `</details>\n\n`;
+            }
+            
+            summary += `📍 **Critical/High issues have inline comments on the code**\n\n`;
             
             // Audit Evidence (SCF-GRC-03)
             summary += `<details><summary>📁 Audit Evidence (SCF-GRC-03: Control Assessment)</summary>\n\n`;
