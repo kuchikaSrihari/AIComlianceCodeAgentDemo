@@ -552,16 +552,25 @@ Think step-by-step:
         lang = self.LANG_MAP.get(file_type, 'text')
         
         try:
+            import time
+            start_time = time.time()
+            
+            # Optimize: Limit code size for faster analysis (8K chars is enough)
+            code_truncated = code[:8000] if len(code) > 8000 else code
+            
             # Build the analysis prompt
             prompt = self.ANALYSIS_PROMPT.format(
                 filepath=filepath,
                 file_type=file_type,
                 scan_mode=scan_mode,
                 lang=lang,
-                code=code[:15000]  # Increased context window
+                code=code_truncated
             )
             
             response = self.model.generate_content(prompt)
+            
+            elapsed = time.time() - start_time
+            print(f"   ⏱️  AI response time: {elapsed:.1f}s")
             
             # Parse JSON from response
             text = response.text.strip()
