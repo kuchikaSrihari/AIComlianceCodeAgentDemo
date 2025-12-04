@@ -92,27 +92,59 @@ jobs:
             
             // Build summary
             let summary = report.decision === 'BLOCK' ? '## 🚫 Compliance Check Failed\n\n' : '## ✅ Compliance Check Passed\n\n';
-            summary += `| Severity | Count |\n|----------|-------|\n`;
-            summary += `| 🔴 Critical | ${s.critical || 0} |\n`;
-            summary += `| 🟠 High | ${s.high || 0} |\n`;
-            summary += `| 🟡 Medium | ${s.medium || 0} |\n`;
-            summary += `| 🔵 Low | ${s.low || 0} |\n\n`;
-            summary += `**Risk Score:** ${ai.risk_score || 0}/10 | **Files:** ${ai.files_scanned || 0}\n\n`;
-            if (ai.executive_summary) summary += `> ${ai.executive_summary}\n\n`;
             
-            // Add findings details
-            if (findings.length > 0) {
-              summary += `### Findings\n\n`;
-              for (const f of findings.slice(0, 15)) {
-                const sev = (f.severity || 'low').toUpperCase();
-                const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : '🟡';
-                summary += `${icon} **${f.title}** - \`${f.file}:${f.line}\`\n`;
-                if (f.cve_id) summary += `  - CVE: ${f.cve_id}\n`;
-                summary += `  - Fix: ${(f.remediation || '').substring(0, 100)}\n\n`;
-              }
+            // Severity table
+            summary += `### 📊 Scan Summary\n\n`;
+            summary += `| Severity | Count | | Metric | Value |\n`;
+            summary += `|----------|-------|-|--------|-------|\n`;
+            summary += `| 🔴 Critical | ${s.critical || 0} | | Risk Score | ${ai.risk_score || 0}/10 |\n`;
+            summary += `| 🟠 High | ${s.high || 0} | | Files Scanned | ${ai.files_scanned || 0} |\n`;
+            summary += `| 🟡 Medium | ${s.medium || 0} | | Total Findings | ${ai.total_findings || findings.length} |\n`;
+            summary += `| 🔵 Low | ${s.low || 0} | | AI Powered | ✅ |\n\n`;
+            
+            // Executive summary
+            if (ai.executive_summary) {
+              summary += `### 📋 Executive Summary\n> ${ai.executive_summary}\n\n`;
             }
             
-            summary += `---\n*🤖 AI Compliance Bot | Google Gemini*`;
+            // Findings by category
+            if (findings.length > 0) {
+              summary += `### 🔍 Findings\n\n`;
+              summary += `| Severity | Issue | Location | SCF Control | Fix |\n`;
+              summary += `|----------|-------|----------|-------------|-----|\n`;
+              
+              for (const f of findings.slice(0, 12)) {
+                const sev = (f.severity || 'low').toUpperCase();
+                const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
+                const cve = f.cve_id ? ` (${f.cve_id})` : '';
+                const fix = (f.remediation || 'Review manually').substring(0, 50);
+                summary += `| ${icon} ${sev} | ${f.title}${cve} | \`${f.file}:${f.line}\` | ${f.scf_control || '-'} | ${fix}... |\n`;
+              }
+              summary += `\n`;
+            }
+            
+            // Compliance frameworks
+            summary += `### 🏛️ Compliance Mapping\n\n`;
+            summary += `**Frameworks Checked:** SCF, SOC2, HIPAA, PCI-DSS, NIST\n\n`;
+            
+            const controls = new Set();
+            findings.forEach(f => {
+              if (f.scf_control) controls.add(f.scf_control);
+            });
+            if (controls.size > 0) {
+              summary += `**Controls Violated:** ${[...controls].join(', ')}\n\n`;
+            }
+            
+            // Audit evidence note
+            summary += `<details>\n<summary>📁 Audit Evidence</summary>\n\n`;
+            summary += `- **Scan Time:** ${new Date().toISOString()}\n`;
+            summary += `- **PR:** #${context.issue.number}\n`;
+            summary += `- **Commit:** ${context.sha?.substring(0, 7) || 'N/A'}\n`;
+            summary += `- **Branch:** ${context.payload.pull_request?.head?.ref || 'N/A'}\n`;
+            summary += `- **Report:** \`scan_report.json\` (artifact)\n`;
+            summary += `</details>\n\n`;
+            
+            summary += `---\n*🤖 AI Compliance-as-Code Bot | Shift-left security powered by Google Gemini*`;
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,

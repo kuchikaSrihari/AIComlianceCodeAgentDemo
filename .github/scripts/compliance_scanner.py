@@ -2,17 +2,20 @@
 """
 AI Compliance-as-Code Bot
 =========================
-Shift-left compliance scanner that embeds policy-as-code into your SDLC.
+An AI assistant that codifies security and compliance rules into automated checks.
 
-Features:
-- Scans PRs for security/compliance violations
-- Maps findings to SCF, SOC2, HIPAA, PCI-DSS frameworks
-- Provides AI-powered remediation suggestions
-- Comments directly on code lines in PRs
+Key Capabilities:
+1. SHIFT-LEFT COMPLIANCE: Embeds policy-as-code and guardrails into SDLC
+2. CONTINUOUS ENFORCEMENT: Real-time checks in CI/CD pipelines
+3. AUDIT EVIDENCE: Auto-collects proof against compliance frameworks
+4. SCALE WITHOUT BOTTLENECKS: Instant feedback, no security team delays
 
-Supports: Java, Python, JavaScript, TypeScript, Terraform, YAML, JSON
+Supported Scans:
+- Source Code: Java, Python, JavaScript, TypeScript
+- Infrastructure-as-Code: Terraform, CloudFormation, Kubernetes YAML
+- Configuration: JSON, YAML, Properties files
 
-Usage: Add this to any repo's .github/scripts/ folder along with the workflow.
+Compliance Frameworks: SCF, SOC2, HIPAA, PCI-DSS, NIST, ISO27001
 """
 
 import os
@@ -37,63 +40,80 @@ class AIComplianceScanner:
     - NET (Network Security): Network configurations
     """
     
-    PROMPT = """You are an expert security and compliance code reviewer with deep knowledge of CVEs and vulnerability databases.
+    PROMPT = """You are an expert security and compliance code reviewer. Your role is to enforce policy-as-code guardrails in the SDLC.
 
-Analyze this code for security vulnerabilities, compliance violations, and known CVE patterns.
+Analyze this code for security vulnerabilities, compliance violations, and infrastructure misconfigurations.
 
 FILE: {filepath}
+FILE TYPE: {file_type}
 
 CODE:
 ```
 {code}
 ```
 
-Find ALL issues and return ONLY valid JSON (no markdown, no code blocks):
+Return ONLY valid JSON (no markdown):
 {{
     "findings": [
         {{
             "title": "Issue title",
             "severity": "critical|high|medium|low",
-            "line": <line number where issue occurs>,
-            "description": "What's wrong and why it's a compliance risk",
-            "remediation": "Specific code fix or configuration change",
-            "scf_control": "SCF control code (e.g., CRY-03, TDA-02, CFG-01)",
+            "line": <line number>,
+            "category": "secrets|injection|crypto|access|network|config|data|iac",
+            "description": "What's wrong and compliance impact",
+            "remediation": "Specific fix with code example if possible",
+            "scf_control": "SCF control (e.g., TDA-02, CFG-01, CRY-03)",
             "soc2_control": "SOC2 control (e.g., CC6.1, CC7.2)",
-            "compliance_frameworks": ["SOC2", "HIPAA", "PCI-DSS"],
-            "cve_id": "CVE-YYYY-NNNNN if applicable, otherwise null",
-            "cwe_id": "CWE-XXX if applicable"
+            "compliance_frameworks": ["SOC2", "HIPAA", "PCI-DSS", "NIST", "ISO27001"],
+            "cve_id": "CVE-YYYY-NNNNN or null",
+            "cwe_id": "CWE-XXX or null",
+            "evidence": "Code snippet or config that proves the violation"
         }}
     ],
     "risk_score": <1-10>,
-    "executive_summary": "2-3 sentence summary for management"
+    "executive_summary": "2-3 sentence audit summary",
+    "audit_evidence": {{
+        "scan_type": "code|iac|config",
+        "frameworks_checked": ["SCF", "SOC2", "HIPAA"],
+        "controls_violated": ["TDA-02", "CFG-01"],
+        "controls_passed": ["CRY-01"]
+    }}
 }}
 
-COMPLIANCE & SECURITY FOCUS AREAS:
+=== SOURCE CODE CHECKS (Java, Python, JS, TS) ===
 
-1. SECRETS (CRY-03): Hardcoded passwords, API keys, tokens, private keys
-2. INJECTION (TDA-02): SQL injection, command injection, XSS, LDAP injection
-3. CRYPTO (CRY-01/02): Weak algorithms (MD5, SHA1, DES), missing encryption
-4. ACCESS (IAC-01): Overly permissive IAM, wildcard permissions
-5. NETWORK (NET-01): Open security groups, public resources, 0.0.0.0/0
-6. CONFIG (CFG-01): Debug mode, missing logging, insecure defaults
-7. DATA (DAT-01): Public S3 buckets, unencrypted storage
+1. SECRETS (SCF.CRY-03): Hardcoded passwords, API keys, tokens, private keys
+2. INJECTION (SCF.TDA-02): SQL injection, command injection, XSS, LDAP injection
+3. CRYPTO (SCF.CRY-01/02): Weak algorithms (MD5, SHA1, DES), missing encryption
+4. DESERIALIZATION (CWE-502): Unsafe ObjectInputStream, pickle, eval
+5. LOGGING (SCF.LOG-01): Missing audit logs, sensitive data in logs
+6. ERROR HANDLING: Stack traces exposed, generic exceptions
 
-CRITICAL CVE PATTERNS TO DETECT:
+=== INFRASTRUCTURE-AS-CODE CHECKS (Terraform, CloudFormation, K8s) ===
 
-8. LOG4J (CVE-2021-44228): Log4j JNDI injection - lookups in log messages
-9. SPRING4SHELL (CVE-2022-22965): Spring Framework RCE via data binding
-10. DESERIALIZATION (CVE-2015-4852, CWE-502): Unsafe ObjectInputStream, XMLDecoder, readObject
-11. XXE (CVE-2014-3529, CWE-611): XML External Entity - DocumentBuilder, SAXParser without secure config
-12. SSRF (CWE-918): Server-side request forgery - unvalidated URLs in HTTP clients
-13. PATH TRAVERSAL (CWE-22): File path manipulation - "../" in file operations
-14. PROTOTYPE POLLUTION (CVE-2019-10744): JavaScript object prototype manipulation
-15. STRUTS RCE (CVE-2017-5638): OGNL injection in Struts
-16. JACKSON DESERIALIZATION (CVE-2017-7525): Polymorphic type handling
-17. APACHE COMMONS (CVE-2015-7501): Commons Collections gadget chains
+7. NETWORK (SCF.NET-01): Open security groups, 0.0.0.0/0, public subnets
+8. ACCESS (SCF.IAC-01): Wildcard IAM permissions, overly permissive roles
+9. ENCRYPTION (SCF.CRY-02): Unencrypted S3, RDS, EBS volumes
+10. LOGGING (SCF.LOG-02): Missing CloudTrail, VPC flow logs
+11. LEAST PRIVILEGE: Root access, admin permissions
+12. RESOURCE CONFIG: Public buckets, open ports, missing tags
 
-For any CVE pattern detected, ALWAYS mark as CRITICAL severity and include the CVE ID.
+=== CONFIGURATION CHECKS (YAML, JSON, Properties) ===
 
-Return findings for ALL issues found. Be thorough and flag all potential vulnerabilities."""
+13. DEBUG MODE: Debug enabled in production
+14. INSECURE DEFAULTS: Default passwords, weak settings
+15. MISSING SECURITY HEADERS: CORS, CSP, HSTS
+
+=== CRITICAL CVE PATTERNS ===
+
+16. LOG4J (CVE-2021-44228): JNDI injection in log messages
+17. SPRING4SHELL (CVE-2022-22965): Spring RCE via data binding
+18. XXE (CVE-2014-3529): XML External Entity attacks
+19. JACKSON (CVE-2017-7525): Polymorphic deserialization
+
+For CVE patterns, ALWAYS mark as CRITICAL with CVE ID.
+
+Be thorough. Flag ALL violations. Provide audit evidence for each finding."""
 
     def __init__(self):
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -113,13 +133,38 @@ Return findings for ALL issues found. Be thorough and flag all potential vulnera
             print("⚠️ No GEMINI_API_KEY found")
             print("   Add GEMINI_API_KEY to repository secrets to enable AI scanning")
 
+    def get_file_type(self, filepath: str) -> str:
+        """Determine file type for specialized scanning."""
+        ext = filepath.lower().split('.')[-1] if '.' in filepath else ''
+        
+        if ext in ['tf', 'tfvars']:
+            return 'terraform'
+        elif ext in ['yaml', 'yml']:
+            if 'kubernetes' in filepath.lower() or 'k8s' in filepath.lower():
+                return 'kubernetes'
+            elif 'cloudformation' in filepath.lower() or 'cfn' in filepath.lower():
+                return 'cloudformation'
+            return 'yaml_config'
+        elif ext == 'java':
+            return 'java'
+        elif ext == 'py':
+            return 'python'
+        elif ext in ['js', 'ts', 'jsx', 'tsx']:
+            return 'javascript'
+        elif ext == 'json':
+            return 'json_config'
+        else:
+            return 'generic'
+
     def analyze(self, filepath: str, code: str) -> Dict[str, Any]:
         """Analyze code using AI for compliance violations."""
         if not self.enabled:
             return {"findings": [], "ai_powered": False}
         
+        file_type = self.get_file_type(filepath)
+        
         try:
-            prompt = self.PROMPT.format(filepath=filepath, code=code[:10000])
+            prompt = self.PROMPT.format(filepath=filepath, file_type=file_type, code=code[:12000])
             response = self.model.generate_content(prompt)
             
             # Parse JSON from response
