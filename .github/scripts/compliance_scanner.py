@@ -60,9 +60,9 @@ Focus on: hardcoded secrets, SQL injection, command injection, weak crypto, inse
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel("gemini-1.5-flash")
+                self.model = genai.GenerativeModel("gemini-2.0-flash")
                 self.enabled = True
-                print("🤖 AI Engine: Google Gemini (gemini-1.5-flash) - FREE")
+                print(f"🤖 AI Engine: Google Gemini ({self.model.model_name}) - FREE")
             except Exception as e:
                 print(f"⚠️ Failed to initialize Gemini: {e}")
         else:
