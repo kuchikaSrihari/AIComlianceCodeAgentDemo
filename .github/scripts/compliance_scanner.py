@@ -23,12 +23,32 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # Optional AI imports - graceful fallback if not available
+# Supports: OpenAI, Google Gemini (free), Groq (free)
+OPENAI_AVAILABLE = False
+GEMINI_AVAILABLE = False
+GROQ_AVAILABLE = False
+
 try:
     import openai
-    AI_AVAILABLE = True
+    OPENAI_AVAILABLE = True
 except ImportError:
-    AI_AVAILABLE = False
-    print("⚠️ OpenAI not installed - running in rule-based mode only")
+    pass
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    pass
+
+AI_AVAILABLE = OPENAI_AVAILABLE or GEMINI_AVAILABLE or GROQ_AVAILABLE
+if not AI_AVAILABLE:
+    print("⚠️ No AI libraries installed - running in rule-based mode only")
 
 # Policy definitions (embedded for standalone execution)
 POLICIES = {
@@ -230,7 +250,10 @@ POLICIES = {
 
 class AIComplianceEngine:
     """
-    AI-powered compliance analysis using OpenAI GPT.
+    AI-powered compliance analysis supporting multiple providers:
+    - OpenAI GPT (paid)
+    - Google Gemini (FREE - recommended)
+    - Groq (FREE - fast)
     
     This engine provides:
     1. Contextual vulnerability analysis
@@ -249,18 +272,46 @@ For each finding, you must:
 4. Map to compliance frameworks (SCF, SOC2, HIPAA, PCI-DSS)
 5. Estimate business impact and risk score (1-10)
 
-Be precise and actionable. Developers should be able to fix issues immediately from your suggestions."""
+Be precise and actionable. Developers should be able to fix issues immediately from your suggestions.
+
+IMPORTANT: Return your response as valid JSON only, no markdown formatting."""
 
     def __init__(self):
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        self.model = os.environ.get("AI_MODEL", "gpt-4o-mini")  # Cost-effective default
-        self.enabled = AI_AVAILABLE and bool(self.api_key)
+        # Check for API keys in priority order: Gemini (free) > Groq (free) > OpenAI (paid)
+        self.gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        self.groq_key = os.environ.get("GROQ_API_KEY")
+        self.openai_key = os.environ.get("OPENAI_API_KEY")
         
-        if self.enabled:
-            openai.api_key = self.api_key
-            print(f"🤖 AI Engine initialized with model: {self.model}")
+        # Determine which provider to use
+        self.provider = None
+        self.model = None
+        self.enabled = False
+        
+        if self.gemini_key and GEMINI_AVAILABLE:
+            self.provider = "gemini"
+            self.model = os.environ.get("AI_MODEL", "gemini-1.5-flash")  # Free model
+            genai.configure(api_key=self.gemini_key)
+            self.gemini_model = genai.GenerativeModel(self.model)
+            self.enabled = True
+            print(f"🤖 AI Engine: Google Gemini ({self.model}) - FREE")
+            
+        elif self.groq_key and GROQ_AVAILABLE:
+            self.provider = "groq"
+            self.model = os.environ.get("AI_MODEL", "llama-3.1-70b-versatile")  # Free model
+            self.groq_client = Groq(api_key=self.groq_key)
+            self.enabled = True
+            print(f"🤖 AI Engine: Groq ({self.model}) - FREE")
+            
+        elif self.openai_key and OPENAI_AVAILABLE:
+            self.provider = "openai"
+            self.model = os.environ.get("AI_MODEL", "gpt-4o-mini")
+            openai.api_key = self.openai_key
+            self.enabled = True
+            print(f"🤖 AI Engine: OpenAI ({self.model})")
+            
         else:
-            print("⚠️ AI Engine disabled - no API key or OpenAI not installed")
+            print("⚠️ AI Engine disabled - no API key found")
+            print("   Add one of: GEMINI_API_KEY (free), GROQ_API_KEY (free), or OPENAI_API_KEY")
     
     def analyze_code(self, code: str, filepath: str, rule_findings: List[Dict]) -> Dict[str, Any]:
         """
@@ -325,20 +376,13 @@ Provide your analysis in this JSON format:
     "executive_summary": "<2-3 sentence summary for management>"
 }}"""
 
-            response = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,  # Low temperature for consistent analysis
-                max_tokens=2000,
-                response_format={"type": "json_object"}
-            )
+            # Call appropriate AI provider
+            response_text = self._call_ai_provider(prompt)
             
-            ai_result = json.loads(response.choices[0].message.content)
+            # Parse JSON response
+            ai_result = json.loads(response_text)
             ai_result["ai_powered"] = True
-            ai_result["model_used"] = self.model
+            ai_result["model_used"] = f"{self.provider}:{self.model}"
             
             print(f"🤖 AI Analysis complete - Risk Score: {ai_result.get('risk_score', 'N/A')}/10")
             return ai_result
@@ -347,22 +391,46 @@ Provide your analysis in this JSON format:
             print(f"⚠️ AI analysis failed: {e}")
             return self._fallback_analysis(rule_findings)
     
+    def _call_ai_provider(self, prompt: str) -> str:
+        """Call the configured AI provider and return response text."""
+        full_prompt = f"{self.SYSTEM_PROMPT}\n\n{prompt}"
+        
+        if self.provider == "gemini":
+            response = self.gemini_model.generate_content(full_prompt)
+            return response.text
+            
+        elif self.provider == "groq":
+            response = self.groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.1,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content
+            
+        elif self.provider == "openai":
+            response = openai.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+                response_format={"type": "json_object"}
+            )
+            return response.choices[0].message.content
+        
+        return "{}"
+    
     def generate_fix(self, code_snippet: str, vulnerability: str) -> str:
         """Generate AI-powered code fix for a specific vulnerability."""
         if not self.enabled:
             return "AI fix generation not available"
         
         try:
-            response = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a security expert. Provide ONLY the fixed code, no explanations."},
-                    {"role": "user", "content": f"Fix this {vulnerability} vulnerability:\n```\n{code_snippet}\n```"}
-                ],
-                temperature=0.1,
-                max_tokens=500
-            )
-            return response.choices[0].message.content.strip()
+            prompt = f"Fix this {vulnerability} vulnerability. Return ONLY the fixed code:\n```\n{code_snippet}\n```"
+            return self._call_ai_provider(prompt).strip()
         except Exception as e:
             return f"Fix generation failed: {e}"
     

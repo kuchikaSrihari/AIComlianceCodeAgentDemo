@@ -22,9 +22,12 @@ permissions:
 
 env:
   COMPLIANCE_API_URL: ${{ secrets.COMPLIANCE_API_URL || 'http://localhost:8000' }}
-  # AI Configuration
+  # AI Configuration - Supports multiple FREE providers
+  # Priority: Gemini (free) > Groq (free) > OpenAI (paid)
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  AI_MODEL: ${{ vars.AI_MODEL || 'gpt-4o-mini' }}  # Cost-effective default
+  AI_MODEL: ${{ vars.AI_MODEL || '' }}  # Auto-selects based on provider
   ENABLE_AI: ${{ vars.ENABLE_AI || 'true' }}
 
 jobs:
@@ -59,7 +62,7 @@ jobs:
 
       - name: Install Scanner Dependencies
         run: |
-          pip install requests pyyaml openai
+          pip install requests pyyaml openai google-generativeai groq
 
       - name: Get Scanner from Base Branch
         run: |
