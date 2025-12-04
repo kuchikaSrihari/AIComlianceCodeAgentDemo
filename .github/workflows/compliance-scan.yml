@@ -1,14 +1,7 @@
 name: AI Compliance Security Scan
 
-# =============================================================================
-# AI-POWERED COMPLIANCE SCANNER
-# =============================================================================
-# This workflow uses a HYBRID approach:
-# 1. RULE-BASED: Fast regex patterns for known vulnerabilities
-# 2. AI/LLM: OpenAI GPT for contextual analysis (optional, requires API key)
-#
-# To enable AI features, add OPENAI_API_KEY to repository secrets
-# =============================================================================
+# Uses Google Gemini (FREE) for AI-powered code security analysis
+# Add GEMINI_API_KEY to repository secrets to enable
 
 on:
   pull_request:
@@ -21,14 +14,7 @@ permissions:
   issues: write
 
 env:
-  COMPLIANCE_API_URL: ${{ secrets.COMPLIANCE_API_URL || 'http://localhost:8000' }}
-  # AI Configuration - Supports multiple FREE providers
-  # Priority: Gemini (free) > Groq (free) > OpenAI (paid)
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  AI_MODEL: ${{ vars.AI_MODEL || '' }}  # Auto-selects based on provider
-  ENABLE_AI: ${{ vars.ENABLE_AI || 'true' }}
 
 jobs:
   compliance-scan:
@@ -62,7 +48,7 @@ jobs:
 
       - name: Install Scanner Dependencies
         run: |
-          pip install requests pyyaml openai google-generativeai groq
+          pip install google-generativeai
 
       - name: Get Scanner from Base Branch
         run: |
@@ -73,12 +59,9 @@ jobs:
         id: scan
         env:
           CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          # AI environment variables are inherited from job env
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           echo "🤖 Starting AI-Powered Compliance Scan..."
-          echo "AI Enabled: ${{ env.OPENAI_API_KEY && 'Yes' || 'No (add OPENAI_API_KEY secret)' }}"
           python .github/scripts/compliance_scanner.py
 
       - name: Comment PR - Blocking Issues
@@ -194,27 +177,7 @@ jobs:
           echo "::error::PR blocked due to security/compliance violations"
           exit 1
 
-# =============================================================================
-# HOW AI IS USED IN THIS WORKFLOW
-# =============================================================================
-# 
-# 1. RULE-BASED DETECTION (Always runs):
-#    - Fast regex pattern matching for known vulnerability signatures
-#    - Hardcoded secrets, SQL injection, command injection, etc.
-#    - Deterministic: same input = same output
-#
-# 2. AI/LLM ANALYSIS (When OPENAI_API_KEY is set):
-#    - Contextual code understanding beyond pattern matching
-#    - False positive reduction using semantic analysis
-#    - AI-generated remediation code suggestions
-#    - Risk scoring with business impact reasoning
-#    - Compliance gap analysis across frameworks (SOC2, HIPAA, PCI-DSS)
-#
-# 3. HYBRID MERGE:
-#    - AI validates rule-based findings (true/false positive)
-#    - AI can adjust severity based on context
-#    - AI discovers additional issues not caught by rules
-#    - Final report combines both for best accuracy
-#
-# To enable AI: Add OPENAI_API_KEY to repository Settings > Secrets
-# =============================================================================
+# AI (Google Gemini) analyzes code for:
+# - Security vulnerabilities (secrets, injection, crypto)
+# - Compliance mapping (SCF, SOC2, HIPAA, PCI-DSS)
+# - Risk scoring and remediation suggestions
