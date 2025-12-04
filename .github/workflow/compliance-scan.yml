@@ -1,0 +1,150 @@
+name: AI Compliance Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  COMPLIANCE_API_URL: ${{ secrets.COMPLIANCE_API_URL || 'http://localhost:8000' }}
+
+jobs:
+  compliance-scan:
+    name: Security & Compliance Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Changed Files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.py
+            **/*.js
+            **/*.ts
+            **/*.java
+            **/*.tf
+            **/*.yaml
+            **/*.yml
+            **/*.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Scanner
+        run: |
+          pip install requests pyyaml
+
+      - name: Run Compliance Scan
+        id: scan
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          python .github/scripts/compliance_scanner.py
+
+      - name: Comment PR - Blocking Issues
+        if: steps.scan.outputs.decision == 'BLOCK'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            
+            let comment = `## 🚫 Compliance Check Failed\n\n`;
+            comment += `**Decision:** ${report.decision}\n`;
+            comment += `**Reason:** ${report.reason}\n\n`;
+            
+            comment += `### Summary\n`;
+            comment += `| Severity | Count |\n|----------|-------|\n`;
+            comment += `| 🔴 Critical | ${report.summary.critical} |\n`;
+            comment += `| 🟠 High | ${report.summary.high} |\n`;
+            comment += `| 🟡 Medium | ${report.summary.medium} |\n`;
+            comment += `| 🔵 Low | ${report.summary.low} |\n\n`;
+            
+            if (report.blocking_issues.length > 0) {
+              comment += `### 🚨 Blocking Issues (Must Fix)\n\n`;
+              for (const issue of report.blocking_issues) {
+                comment += `#### ${issue.severity}: ${issue.title}\n`;
+                comment += `- **File:** \`${issue.file}:${issue.line}\`\n`;
+                comment += `- **SCF Control:** ${issue.scf_control}\n`;
+                comment += `- **SOC2:** ${issue.soc2_control}\n`;
+                comment += `- **Description:** ${issue.description}\n`;
+                comment += `- **Remediation:** ${issue.remediation}\n\n`;
+              }
+            }
+            
+            if (report.suggestions.length > 0) {
+              comment += `### 💡 Suggestions (Recommended)\n\n`;
+              for (const sug of report.suggestions.slice(0, 5)) {
+                comment += `- **${sug.title}** (\`${sug.file}\`): ${sug.remediation}\n`;
+              }
+            }
+            
+            comment += `\n---\n*AI Compliance-as-Code Bot | SCF + SOC2 Mapped*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Comment PR - Passed with Suggestions
+        if: steps.scan.outputs.decision == 'ALLOW' && steps.scan.outputs.has_suggestions == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            
+            let comment = `## ✅ Compliance Check Passed\n\n`;
+            comment += `No blocking issues found.\n\n`;
+            
+            if (report.suggestions.length > 0) {
+              comment += `### 💡 Suggestions for Improvement\n\n`;
+              for (const sug of report.suggestions) {
+                comment += `- **${sug.title}** (\`${sug.file}:${sug.line}\`)\n`;
+                comment += `  - ${sug.remediation}\n`;
+              }
+            }
+            
+            comment += `\n---\n*AI Compliance-as-Code Bot*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Comment PR - All Clear
+        if: steps.scan.outputs.decision == 'ALLOW' && steps.scan.outputs.has_suggestions != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## ✅ Compliance Check Passed\n\nNo security or compliance issues detected.\n\n---\n*AI Compliance-as-Code Bot*'
+            });
+
+      - name: Fail if Blocked
+        if: steps.scan.outputs.decision == 'BLOCK'
+        run: |
+          echo "::error::PR blocked due to security/compliance violations"
+          exit 1
