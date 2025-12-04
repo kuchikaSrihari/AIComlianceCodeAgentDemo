@@ -515,7 +515,7 @@ def main():
     SKIP_PATHS = ('.github/', 'node_modules/', 'target/', 'build/', '.git/', '__pycache__/', 'test-samples/dependencies/')
     
     # OPTIMIZATION: Limit max files to avoid rate limits
-    MAX_FILES = 5
+    MAX_FILES = 3
     
     # Filter files first
     files_to_scan = []
