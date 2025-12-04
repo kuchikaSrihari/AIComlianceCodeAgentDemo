@@ -297,7 +297,7 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
         """
         self.api_key = os.environ.get("GROQ_API_KEY")
         self.enabled = False
-        self.model_name = "llama-3.3-70b-versatile"
+        self.model_name = "llama-3.1-8b-instant"  # Fast model for quick scans
         self.client = None
         self.scan_stats = {"files": 0, "findings": 0, "time_ms": 0}
         
