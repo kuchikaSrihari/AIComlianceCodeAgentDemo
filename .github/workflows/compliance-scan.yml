@@ -1,21 +1,3 @@
-# =============================================================================
-# AI COMPLIANCE-AS-CODE BOT
-# =============================================================================
-# Shift-left compliance scanner that runs on every PR
-#
-# Features:
-# - AI-powered code analysis (Google Gemini - FREE)
-# - Inline comments on specific code lines
-# - SCF, SOC2, HIPAA, PCI-DSS compliance mapping
-# - Blocks PRs with critical/high severity issues
-#
-# Setup:
-# 1. Add GEMINI_API_KEY to repository secrets
-#    Get free key: https://aistudio.google.com/app/apikey
-# 2. Copy this file to .github/workflows/
-# 3. Copy compliance_scanner.py to .github/scripts/
-# =============================================================================
-
 name: AI Compliance Scan
 
 on:
@@ -27,118 +9,58 @@ permissions:
   contents: read
   pull-requests: write
 
-env:
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-
 jobs:
   compliance-scan:
     name: 🛡️ Compliance Check
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Get Changed Files
-        id: changed-files
+        id: files
         uses: tj-actions/changed-files@v44
         with:
-          files: |
-            **/*.java
-            **/*.py
-            **/*.js
-            **/*.ts
-            **/*.jsx
-            **/*.tsx
-            **/*.tf
-            **/*.yaml
-            **/*.yml
-            **/*.json
-            **/*.xml
-            **/*.properties
+          files: '**/*.{java,py,js,ts,tf,yaml,yml,json}'
 
-      # FIRST: Delete ALL old bot comments before doing anything else
-      - name: Delete Old Bot Comments
+      - name: Cleanup Old Comments
         uses: actions/github-script@v7
         with:
           script: |
-            console.log('🧹 Cleaning up old bot comments...');
-            
-            // Delete ALL PR comments from github-actions bot
-            try {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number
-              });
-              
-              let deleted = 0;
-              for (const comment of comments) {
-                // Delete if it's from github-actions bot OR contains our signatures
-                const isGHActions = comment.user?.login === 'github-actions[bot]';
-                const hasSignature = comment.body && (
-                  comment.body.includes('Compliance') ||
-                  comment.body.includes('🤖') ||
-                  comment.body.includes('AI Analysis')
-                );
-                
-                if (isGHActions || hasSignature) {
-                  try {
-                    await github.rest.issues.deleteComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      comment_id: comment.id
-                    });
-                    deleted++;
-                  } catch (e) {
-                    console.log(`Could not delete ${comment.id}`);
-                  }
-                }
+            // Delete ALL comments from github-actions bot on this PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            for (const c of comments) {
+              if (c.user?.login === 'github-actions[bot]') {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id
+                }).catch(() => {});
               }
-              console.log(`✅ Deleted ${deleted} PR comments`);
-            } catch (e) {
-              console.log('Error listing comments:', e.message);
             }
-            
             // Delete ALL review comments from bot
-            try {
-              const { data: reviews } = await github.rest.pulls.listReviewComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.issue.number
-              });
-              
-              let deletedReviews = 0;
-              for (const rc of reviews) {
-                const isGHActions = rc.user?.login === 'github-actions[bot]';
-                const hasSignature = rc.body && (
-                  rc.body.includes('Compliance') ||
-                  rc.body.includes('🤖') ||
-                  rc.body.includes('CVE') ||
-                  rc.body.includes('CWE')
-                );
-                
-                if (isGHActions || hasSignature) {
-                  try {
-                    await github.rest.pulls.deleteReviewComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      comment_id: rc.id
-                    });
-                    deletedReviews++;
-                  } catch (e) {
-                    console.log(`Could not delete review ${rc.id}`);
-                  }
-                }
+            const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            for (const rc of reviewComments) {
+              if (rc.user?.login === 'github-actions[bot]') {
+                await github.rest.pulls.deleteReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: rc.id
+                }).catch(() => {});
               }
-              console.log(`✅ Deleted ${deletedReviews} review comments`);
-            } catch (e) {
-              console.log('Error listing review comments:', e.message);
             }
-            
-            console.log('🧹 Cleanup complete!');
+            console.log('Cleanup done');
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -148,146 +70,57 @@ jobs:
       - name: Install Dependencies
         run: pip install google-generativeai
 
-      - name: Run AI Compliance Scan
+      - name: Run Scan
         id: scan
         env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          CHANGED_FILES: ${{ steps.files.outputs.all_changed_files }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python .github/scripts/compliance_scanner.py
 
-      # Add inline comments on specific code lines
-      - name: Add Inline Review Comments
+      - name: Post Results
         if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            
-            if (!fs.existsSync('scan_report.json')) {
-              console.log('No scan report found');
-              return;
-            }
-            
-            const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
-            const allFindings = [...(report.blocking_issues || []), ...(report.suggestions || [])];
-            
-            if (allFindings.length === 0) {
-              console.log('No findings to comment on');
-              return;
-            }
-            
-            // Get PR info
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            const commitId = pr.head.sha;
-            const comments = [];
-            
-            for (const finding of allFindings) {
-              if (!finding.file || !finding.line) continue;
-              
-              const sev = (finding.severity || 'info').toUpperCase();
-              const emoji = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
-              
-              let body = `## ${emoji} ${sev}: ${finding.title}\n\n`;
-              
-              // Show CVE/CWE if present (critical security info)
-              if (finding.cve_id) {
-                body += `**🚨 CVE:** [${finding.cve_id}](https://nvd.nist.gov/vuln/detail/${finding.cve_id})\n\n`;
-              }
-              if (finding.cwe_id) {
-                body += `**⚠️ CWE:** [${finding.cwe_id}](https://cwe.mitre.org/data/definitions/${finding.cwe_id.replace('CWE-', '')}.html)\n\n`;
-              }
-              
-              body += `**📋 Issue:** ${finding.description || 'Security/compliance issue detected'}\n\n`;
-              body += `**✅ Fix:** ${finding.remediation || 'Review and fix this issue'}\n\n`;
-              
-              if (finding.scf_control || finding.soc2_control) {
-                body += `**📊 Compliance:**`;
-                if (finding.scf_control) body += ` SCF ${finding.scf_control}`;
-                if (finding.soc2_control) body += ` | SOC2 ${finding.soc2_control}`;
-                body += `\n\n`;
-              }
-              
-              if (finding.compliance_frameworks && finding.compliance_frameworks.length > 0) {
-                body += `**🏛️ Frameworks:** ${finding.compliance_frameworks.join(', ')}\n\n`;
-              }
-              
-              body += `---\n*🤖 AI Compliance Bot*`;
-              
-              comments.push({
-                path: finding.file,
-                line: parseInt(finding.line) || 1,
-                body: body
-              });
-            }
-            
-            if (comments.length > 0) {
-              try {
-                await github.rest.pulls.createReview({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: context.issue.number,
-                  commit_id: commitId,
-                  event: report.decision === 'BLOCK' ? 'REQUEST_CHANGES' : 'COMMENT',
-                  body: `## 🛡️ AI Compliance Scan Complete\n\n**Decision:** ${report.decision}\n**Risk Score:** ${report.ai_insights?.risk_score || 0}/10\n**Files Scanned:** ${report.ai_insights?.files_scanned || 0}\n\n${report.decision === 'BLOCK' ? '⚠️ Please fix the issues marked in the code review.' : '✅ No blocking issues found.'}`,
-                  comments: comments.slice(0, 50)  // GitHub limits to 50 comments per review
-                });
-                console.log(`Created review with ${comments.length} inline comments`);
-              } catch (e) {
-                console.log('Review creation failed:', e.message);
-              }
-            }
-
-      # Summary comment on PR
-      - name: Post Summary Comment
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
             if (!fs.existsSync('scan_report.json')) return;
             
             const report = JSON.parse(fs.readFileSync('scan_report.json', 'utf8'));
+            const findings = [...(report.blocking_issues || []), ...(report.suggestions || [])];
             const s = report.summary || {};
             const ai = report.ai_insights || {};
             
-            let comment = report.decision === 'BLOCK' 
-              ? `## 🚫 Compliance Check Failed\n\n`
-              : `## ✅ Compliance Check Passed\n\n`;
+            // Build summary
+            let summary = report.decision === 'BLOCK' ? '## 🚫 Compliance Check Failed\n\n' : '## ✅ Compliance Check Passed\n\n';
+            summary += `| Severity | Count |\n|----------|-------|\n`;
+            summary += `| 🔴 Critical | ${s.critical || 0} |\n`;
+            summary += `| 🟠 High | ${s.high || 0} |\n`;
+            summary += `| 🟡 Medium | ${s.medium || 0} |\n`;
+            summary += `| 🔵 Low | ${s.low || 0} |\n\n`;
+            summary += `**Risk Score:** ${ai.risk_score || 0}/10 | **Files:** ${ai.files_scanned || 0}\n\n`;
+            if (ai.executive_summary) summary += `> ${ai.executive_summary}\n\n`;
             
-            comment += `| Severity | Count |\n|----------|-------|\n`;
-            comment += `| 🔴 Critical | ${s.critical || 0} |\n`;
-            comment += `| 🟠 High | ${s.high || 0} |\n`;
-            comment += `| 🟡 Medium | ${s.medium || 0} |\n`;
-            comment += `| 🔵 Low | ${s.low || 0} |\n\n`;
-            
-            comment += `### 🤖 AI Analysis\n`;
-            comment += `- **Risk Score:** ${ai.risk_score || 0}/10\n`;
-            comment += `- **Files Scanned:** ${ai.files_scanned || 0}\n`;
-            if (ai.executive_summary) {
-              comment += `- **Summary:** ${ai.executive_summary}\n`;
+            // Add findings details
+            if (findings.length > 0) {
+              summary += `### Findings\n\n`;
+              for (const f of findings.slice(0, 15)) {
+                const sev = (f.severity || 'low').toUpperCase();
+                const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : '🟡';
+                summary += `${icon} **${f.title}** - \`${f.file}:${f.line}\`\n`;
+                if (f.cve_id) summary += `  - CVE: ${f.cve_id}\n`;
+                summary += `  - Fix: ${(f.remediation || '').substring(0, 100)}\n\n`;
+              }
             }
             
-            if (report.decision === 'BLOCK') {
-              comment += `\n⚠️ **See inline comments on code for specific issues and fixes.**\n`;
-            }
-            
-            comment += `\n---\n*🤖 AI Compliance-as-Code Bot | Powered by Google Gemini*`;
+            summary += `---\n*🤖 AI Compliance Bot | Google Gemini*`;
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: comment
+              body: summary
             });
 
       - name: Fail if Blocked
         if: steps.scan.outputs.decision == 'BLOCK'
-        run: |
-          echo "::error::PR blocked due to compliance violations"
-          exit 1
+        run: exit 1
