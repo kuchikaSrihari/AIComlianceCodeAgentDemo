@@ -59,6 +59,87 @@ jobs:
             **/*.xml
             **/*.properties
 
+      # FIRST: Delete ALL old bot comments before doing anything else
+      - name: Delete Old Bot Comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('🧹 Cleaning up old bot comments...');
+            
+            // Delete ALL PR comments from github-actions bot
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              
+              let deleted = 0;
+              for (const comment of comments) {
+                // Delete if it's from github-actions bot OR contains our signatures
+                const isGHActions = comment.user?.login === 'github-actions[bot]';
+                const hasSignature = comment.body && (
+                  comment.body.includes('Compliance') ||
+                  comment.body.includes('🤖') ||
+                  comment.body.includes('AI Analysis')
+                );
+                
+                if (isGHActions || hasSignature) {
+                  try {
+                    await github.rest.issues.deleteComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      comment_id: comment.id
+                    });
+                    deleted++;
+                  } catch (e) {
+                    console.log(`Could not delete ${comment.id}`);
+                  }
+                }
+              }
+              console.log(`✅ Deleted ${deleted} PR comments`);
+            } catch (e) {
+              console.log('Error listing comments:', e.message);
+            }
+            
+            // Delete ALL review comments from bot
+            try {
+              const { data: reviews } = await github.rest.pulls.listReviewComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              let deletedReviews = 0;
+              for (const rc of reviews) {
+                const isGHActions = rc.user?.login === 'github-actions[bot]';
+                const hasSignature = rc.body && (
+                  rc.body.includes('Compliance') ||
+                  rc.body.includes('🤖') ||
+                  rc.body.includes('CVE') ||
+                  rc.body.includes('CWE')
+                );
+                
+                if (isGHActions || hasSignature) {
+                  try {
+                    await github.rest.pulls.deleteReviewComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      comment_id: rc.id
+                    });
+                    deletedReviews++;
+                  } catch (e) {
+                    console.log(`Could not delete review ${rc.id}`);
+                  }
+                }
+              }
+              console.log(`✅ Deleted ${deletedReviews} review comments`);
+            } catch (e) {
+              console.log('Error listing review comments:', e.message);
+            }
+            
+            console.log('🧹 Cleanup complete!');
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -73,83 +154,6 @@ jobs:
           CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python .github/scripts/compliance_scanner.py
-
-      # Delete old bot comments to keep PR clean
-      - name: Delete Old Bot Comments
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Signatures to identify bot comments
-            const BOT_SIGNATURES = [
-              '🤖 AI Compliance',
-              'AI Compliance-as-Code Bot',
-              'Compliance Check Passed',
-              'Compliance Check Failed',
-              'AI Compliance Scan Complete',
-              'AI Compliance Bot'
-            ];
-            
-            const isBot = (body) => BOT_SIGNATURES.some(sig => body && body.includes(sig));
-            
-            // Delete old PR comments from bot
-            try {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number
-              });
-              
-              let deleted = 0;
-              for (const comment of comments) {
-                if (isBot(comment.body)) {
-                  try {
-                    await github.rest.issues.deleteComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      comment_id: comment.id
-                    });
-                    deleted++;
-                    console.log(`Deleted comment ${comment.id}`);
-                  } catch (e) {
-                    console.log(`Failed to delete comment ${comment.id}: ${e.message}`);
-                  }
-                }
-              }
-              console.log(`Deleted ${deleted} old bot comments`);
-            } catch (e) {
-              console.log('Could not list comments:', e.message);
-            }
-            
-            // Delete old review comments
-            try {
-              const { data: reviewComments } = await github.rest.pulls.listReviewComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.issue.number
-              });
-              
-              let deletedReviews = 0;
-              for (const rc of reviewComments) {
-                if (isBot(rc.body)) {
-                  try {
-                    await github.rest.pulls.deleteReviewComment({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      comment_id: rc.id
-                    });
-                    deletedReviews++;
-                  } catch (e) {
-                    console.log(`Failed to delete review comment ${rc.id}: ${e.message}`);
-                  }
-                }
-              }
-              console.log(`Deleted ${deletedReviews} old review comments`);
-            } catch (e) {
-              console.log('Could not list review comments:', e.message);
-            }
-            
-            console.log('Cleanup complete');
 
       # Add inline comments on specific code lines
       - name: Add Inline Review Comments
