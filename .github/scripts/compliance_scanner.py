@@ -288,46 +288,37 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
 
     def __init__(self):
         """
-        Initialize AI Compliance Scanner with Groq API.
-        
-        Model Selection: Llama 3.1 70B via Groq
-        - Fast inference (Groq's LPU)
-        - Free tier with generous limits
-        - Great for code analysis
+        Initialize AI Compliance Scanner with Google Gemini.
         """
-        self.api_key = os.environ.get("GROQ_API_KEY")
+        self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         self.enabled = False
-        self.model_name = "llama-3.3-70b-versatile"
-        self.client = None
+        self.model_name = "gemini-2.0-flash-exp"
+        self.model = None
         self.scan_stats = {"files": 0, "findings": 0, "time_ms": 0}
         
         if self.api_key:
             try:
-                from groq import Groq
-                self.client = Groq(api_key=self.api_key)
+                import google.generativeai as genai
+                genai.configure(api_key=self.api_key)
+                
+                self.model = genai.GenerativeModel(
+                    model_name=self.model_name,
+                    generation_config={"temperature": 0.1, "max_output_tokens": 4096},
+                    system_instruction=self.SYSTEM_PROMPT
+                )
                 self.enabled = True
                 
                 print("╔══════════════════════════════════════════════════════════════╗")
                 print("║          🤖 AI COMPLIANCE ENGINE INITIALIZED                 ║")
                 print("╠══════════════════════════════════════════════════════════════╣")
-                print(f"║  Model: Llama 3.1 70B (via Groq)                             ║")
+                print(f"║  Model: Google Gemini 2.0 Flash                              ║")
                 print(f"║  Mode:  Enterprise Security Analysis                         ║")
-                print(f"║  Temp:  0.1 (High precision)                                 ║")
-                print("╠══════════════════════════════════════════════════════════════╣")
-                print("║  SCF Controls: VULN-11, VULN-14, VULN-15, GRC-01, GRC-14     ║")
-                print("║  Frameworks:   SOC2, HIPAA, PCI-DSS, NIST, ISO27001          ║")
-                print("║  Coverage:     OWASP Top 10, CWE Top 25, CVE Database        ║")
                 print("╚══════════════════════════════════════════════════════════════╝")
                 
             except Exception as e:
-                print(f"⚠️ Failed to initialize Groq: {e}")
+                print(f"⚠️ Failed to initialize Gemini: {e}")
         else:
-            print("╔══════════════════════════════════════════════════════════════╗")
-            print("║  ⚠️  AI ENGINE NOT CONFIGURED                                ║")
-            print("╠══════════════════════════════════════════════════════════════╣")
-            print("║  Add GROQ_API_KEY to repository secrets to enable AI         ║")
-            print("║  scanning. Get free key at: https://console.groq.com         ║")
-            print("╚══════════════════════════════════════════════════════════════╝")
+            print("⚠️  Add GEMINI_API_KEY to repository secrets to enable AI scanning")
 
     def get_file_type(self, filepath: str) -> str:
         """Determine file type for specialized scanning."""
@@ -396,22 +387,14 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
                 code=code_truncated
             )
             
-            # Call Groq API
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=4096
-            )
+            # Call Gemini API
+            response = self.model.generate_content(prompt)
             
             elapsed = time.time() - start_time
             print(f"   ⏱️  AI response time: {elapsed:.1f}s")
             
             # Parse JSON from response
-            text = response.choices[0].message.content.strip()
+            text = response.text.strip()
             
             # Remove markdown code blocks if present
             if "```" in text:
