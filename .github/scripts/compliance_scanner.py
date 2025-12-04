@@ -37,9 +37,9 @@ class AIComplianceScanner:
     - NET (Network Security): Network configurations
     """
     
-    PROMPT = """You are an expert security and compliance code reviewer.
+    PROMPT = """You are an expert security and compliance code reviewer with deep knowledge of CVEs and vulnerability databases.
 
-Analyze this code for security vulnerabilities and compliance violations.
+Analyze this code for security vulnerabilities, compliance violations, and known CVE patterns.
 
 FILE: {filepath}
 
@@ -59,23 +59,41 @@ Find ALL issues and return ONLY valid JSON (no markdown, no code blocks):
             "remediation": "Specific code fix or configuration change",
             "scf_control": "SCF control code (e.g., CRY-03, TDA-02, CFG-01)",
             "soc2_control": "SOC2 control (e.g., CC6.1, CC7.2)",
-            "compliance_frameworks": ["SOC2", "HIPAA", "PCI-DSS"]
+            "compliance_frameworks": ["SOC2", "HIPAA", "PCI-DSS"],
+            "cve_id": "CVE-YYYY-NNNNN if applicable, otherwise null",
+            "cwe_id": "CWE-XXX if applicable"
         }}
     ],
     "risk_score": <1-10>,
     "executive_summary": "2-3 sentence summary for management"
 }}
 
-COMPLIANCE FOCUS AREAS:
+COMPLIANCE & SECURITY FOCUS AREAS:
+
 1. SECRETS (CRY-03): Hardcoded passwords, API keys, tokens, private keys
-2. INJECTION (TDA-02): SQL injection, command injection, XSS
+2. INJECTION (TDA-02): SQL injection, command injection, XSS, LDAP injection
 3. CRYPTO (CRY-01/02): Weak algorithms (MD5, SHA1, DES), missing encryption
 4. ACCESS (IAC-01): Overly permissive IAM, wildcard permissions
 5. NETWORK (NET-01): Open security groups, public resources, 0.0.0.0/0
 6. CONFIG (CFG-01): Debug mode, missing logging, insecure defaults
 7. DATA (DAT-01): Public S3 buckets, unencrypted storage
 
-Return findings for ALL issues found. Be thorough."""
+CRITICAL CVE PATTERNS TO DETECT:
+
+8. LOG4J (CVE-2021-44228): Log4j JNDI injection - lookups in log messages
+9. SPRING4SHELL (CVE-2022-22965): Spring Framework RCE via data binding
+10. DESERIALIZATION (CVE-2015-4852, CWE-502): Unsafe ObjectInputStream, XMLDecoder, readObject
+11. XXE (CVE-2014-3529, CWE-611): XML External Entity - DocumentBuilder, SAXParser without secure config
+12. SSRF (CWE-918): Server-side request forgery - unvalidated URLs in HTTP clients
+13. PATH TRAVERSAL (CWE-22): File path manipulation - "../" in file operations
+14. PROTOTYPE POLLUTION (CVE-2019-10744): JavaScript object prototype manipulation
+15. STRUTS RCE (CVE-2017-5638): OGNL injection in Struts
+16. JACKSON DESERIALIZATION (CVE-2017-7525): Polymorphic type handling
+17. APACHE COMMONS (CVE-2015-7501): Commons Collections gadget chains
+
+For any CVE pattern detected, ALWAYS mark as CRITICAL severity and include the CVE ID.
+
+Return findings for ALL issues found. Be thorough and flag all potential vulnerabilities."""
 
     def __init__(self):
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
