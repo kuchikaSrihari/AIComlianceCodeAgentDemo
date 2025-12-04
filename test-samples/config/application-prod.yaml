@@ -1,0 +1,98 @@
+# Production Application Configuration
+#
+# TEST SCENARIO: AI should detect configuration vulnerabilities
+# - Debug mode in production
+# - Hardcoded secrets
+# - Insecure defaults
+# - Missing security headers
+
+server:
+  port: 8080
+  # VULNERABILITY: Debug mode enabled in production (SCF-CFG-01)
+  debug: true                    # CRITICAL: Debug in production!
+  error:
+    include-stacktrace: always   # CRITICAL: Stack traces exposed!
+    include-message: always
+
+spring:
+  application:
+    name: production-app
+  
+  # VULNERABILITY: Hardcoded database credentials (SCF-CRY-03)
+  datasource:
+    url: jdbc:postgresql://prod-db.internal:5432/appdb
+    username: app_admin
+    password: Pr0duct10n_P@ss_2024!   # CRITICAL: Hardcoded password!
+    
+  # VULNERABILITY: Hardcoded Redis password
+  redis:
+    host: redis.internal
+    port: 6379
+    password: RedisSecretPass123      # CRITICAL: Hardcoded!
+
+  # VULNERABILITY: Weak session configuration
+  session:
+    timeout: 86400                    # 24 hours - too long!
+    cookie:
+      secure: false                   # CRITICAL: Cookies over HTTP!
+      http-only: false                # CRITICAL: XSS can steal cookies!
+      same-site: none                 # CRITICAL: CSRF vulnerable!
+
+# VULNERABILITY: Hardcoded JWT secret (SCF-CRY-03)
+jwt:
+  secret: my-super-secret-jwt-signing-key-do-not-share   # CRITICAL!
+  expiration: 604800000  # 7 days - too long for JWT!
+
+# VULNERABILITY: Hardcoded API keys
+integrations:
+  stripe:
+    api-key: sk_test_FAKE_KEY_FOR_TESTING_1234567890    # CRITICAL: Live API key!
+    webhook-secret: whsec_test123456789
+  
+  sendgrid:
+    api-key: SG_FAKE_KEY_FOR_TESTING_ONLY            # CRITICAL: Hardcoded!
+  
+  aws:
+    access-key: AKIAIOSFODNN7EXAMPLE
+    secret-key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY  # CRITICAL!
+    region: us-east-1
+
+# VULNERABILITY: Missing security headers
+security:
+  headers:
+    # All security headers disabled or missing!
+    content-security-policy: ""       # CRITICAL: No CSP!
+    x-frame-options: ""               # CRITICAL: Clickjacking possible!
+    x-content-type-options: ""        # Missing nosniff
+    strict-transport-security: ""     # CRITICAL: No HSTS!
+  
+  # VULNERABILITY: Overly permissive CORS
+  cors:
+    allowed-origins: "*"              # CRITICAL: Any origin allowed!
+    allowed-methods: "*"
+    allow-credentials: true           # CRITICAL: Credentials with wildcard!
+
+# VULNERABILITY: Verbose logging of sensitive data
+logging:
+  level:
+    root: DEBUG                       # Too verbose for production
+    org.springframework.security: DEBUG
+    com.company.app: TRACE
+  
+  # CRITICAL: Logging sensitive data
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg - user=%X{userId} password=%X{password}%n"
+
+# VULNERABILITY: Management endpoints exposed
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"                  # CRITICAL: All actuator endpoints!
+  endpoint:
+    health:
+      show-details: always
+    env:
+      enabled: true                   # CRITICAL: Exposes all env vars!
+    heapdump:
+      enabled: true                   # CRITICAL: Memory dump accessible!
