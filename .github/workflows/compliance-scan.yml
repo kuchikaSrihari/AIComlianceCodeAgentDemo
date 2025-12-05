@@ -1,4 +1,4 @@
-name: AI Compliance Scan
+name: SecureFlow AI
 
 on:
   pull_request:
@@ -26,62 +26,61 @@ jobs:
         with:
           files: '**/*.{java,py,js,ts,tf,yaml,yml,json}'
 
-      - name: Cleanup Old Summary Comments
+      - name: Cleanup ALL Old Bot Comments
         uses: actions/github-script@v7
         with:
           script: |
-            // Delete ONLY old summary comments (keep inline review comments on code)
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
             
-            let deleted = 0;
-            for (const c of comments) {
-              if (c.user?.login === 'github-actions[bot]') {
-                try {
-                  await github.rest.issues.deleteComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    comment_id: c.id
-                  });
-                  deleted++;
-                  console.log(`Deleted summary comment: ${c.id}`);
-                } catch (e) {
-                  console.log(`Failed to delete ${c.id}: ${e.message}`);
+            console.log('🧹 Cleaning up ALL old bot comments (with pagination)...');
+            
+            // 1. Delete ALL issue comments (summary) - WITH PAGINATION
+            let deletedIssue = 0;
+            let page = 1;
+            while (true) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: pull_number, per_page: 100, page
+              });
+              if (comments.length === 0) break;
+              
+              for (const c of comments) {
+                if (c.user?.login === 'github-actions[bot]') {
+                  try {
+                    await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id });
+                    deletedIssue++;
+                  } catch (e) { /* ignore */ }
                 }
               }
+              page++;
+              if (comments.length < 100) break;
             }
-            console.log(`Deleted ${deleted} old summary comments`);
+            console.log(`Deleted ${deletedIssue} summary comments`);
             
-            // Also delete old review BODIES (the "suggested changes" headers)
-            // but this keeps the inline comments on specific lines
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            for (const review of reviews) {
-              if (review.user?.login === 'github-actions[bot]' && review.state !== 'PENDING') {
-                try {
-                  // Dismiss old reviews to clean up "suggested changes" messages
-                  await github.rest.pulls.dismissReview({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: context.issue.number,
-                    review_id: review.id,
-                    message: 'Superseded by new scan'
-                  });
-                  console.log(`Dismissed review: ${review.id}`);
-                } catch (e) {
-                  console.log(`Could not dismiss review ${review.id}: ${e.message}`);
+            // 2. Delete ALL review comments (inline) - WITH PAGINATION
+            let deletedReview = 0;
+            page = 1;
+            while (true) {
+              const { data: comments } = await github.rest.pulls.listReviewComments({
+                owner, repo, pull_number, per_page: 100, page
+              });
+              if (comments.length === 0) break;
+              
+              for (const c of comments) {
+                if (c.user?.login === 'github-actions[bot]') {
+                  try {
+                    await github.rest.pulls.deleteReviewComment({ owner, repo, comment_id: c.id });
+                    deletedReview++;
+                  } catch (e) { /* ignore */ }
                 }
               }
+              page++;
+              if (comments.length < 100) break;
             }
+            console.log(`Deleted ${deletedReview} inline comments`);
             
-            console.log('Cleanup complete');
+            console.log(`✅ Total cleaned: ${deletedIssue + deletedReview} comments`);
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -100,6 +99,7 @@ jobs:
 
       - name: Post Inline Comments
         if: always()
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -121,43 +121,23 @@ jobs:
               pull_number: context.issue.number
             });
             
-            // Build inline comments with enhanced details
+            // ONLY post inline comments for CRITICAL and HIGH severity
             const comments = [];
+            
             for (const f of findings) {
+              const sev = (f.severity || 'low').toLowerCase();
+              if (sev !== 'critical' && sev !== 'high') continue;  // Skip medium/low
               if (!f.file || !f.line) continue;
               
-              const sev = (f.severity || 'low').toUpperCase();
-              const icon = sev === 'CRITICAL' ? '🔴' : sev === 'HIGH' ? '🟠' : sev === 'MEDIUM' ? '🟡' : '🔵';
+              const icon = sev === 'critical' ? '🔴' : '🟠';
               
-              let body = `### ${icon} ${sev}: ${f.title}\n\n`;
+              // CONCISE inline comment
+              let body = `**${icon} ${sev.toUpperCase()}:** ${f.title}\n\n`;
+              body += `CVSS: ${f.cvss_score || 'N/A'} | ${f.owasp_category || ''} | ${f.cwe_id || ''}\n\n`;
+              body += `**Fix:** ${f.remediation || 'Review and fix'}`;
               
-              // Risk metrics (SCF-VULN-15)
-              body += `| Metric | Value |\n|--------|-------|\n`;
-              if (f.cvss_score) body += `| CVSS Score | ${f.cvss_score} |\n`;
-              if (f.exploitability) body += `| Exploitability | ${f.exploitability} |\n`;
-              if (f.owasp_category) body += `| OWASP | ${f.owasp_category} |\n`;
-              if (f.cwe_id) body += `| CWE | ${f.cwe_id} |\n`;
-              if (f.cve_id) body += `| CVE | ${f.cve_id} |\n`;
-              if (f.scf_control) body += `| SCF Control | ${f.scf_control} |\n`;
-              body += `\n`;
-              
-              // Business impact
-              if (f.business_impact) {
-                body += `**Business Impact:** ${f.business_impact}\n\n`;
-              }
-              
-              // Issue description
-              body += `**Issue:** ${f.description || 'Security issue detected'}\n\n`;
-              
-              // Remediation with SLA (SCF-GRC-14)
-              body += `**Remediation:** ${f.remediation || 'Review and fix'}\n\n`;
-              if (f.remediation_sla) {
-                body += `⏰ **SLA:** ${f.remediation_sla}\n\n`;
-              }
-              
-              // Code fix if available
               if (f.code_fix) {
-                body += `<details><summary>📝 Suggested Fix</summary>\n\n\`\`\`\n${f.code_fix}\n\`\`\`\n</details>\n`;
+                body += `\n\n\`\`\`\n${f.code_fix}\n\`\`\``;
               }
               
               comments.push({
@@ -176,9 +156,9 @@ jobs:
                   pull_number: context.issue.number,
                   commit_id: pr.head.sha,
                   event: 'COMMENT',
-                  comments: comments.slice(0, 30)
+                  comments: comments
                 });
-                console.log(`Posted ${comments.length} inline comments`);
+                console.log(`Posted ${comments.length} inline comments (top ${MAX_INLINE} issues)`);
               } catch (e) {
                 console.log('Failed to post inline comments:', e.message);
               }
@@ -186,6 +166,7 @@ jobs:
 
       - name: Post Summary Comment
         if: always()
+        continue-on-error: true  # Don't fail workflow if rate limited
         uses: actions/github-script@v7
         with:
           script: |
@@ -200,10 +181,12 @@ jobs:
             const comp = report.compliance || {};
             const slas = report.remediation_slas || {};
             
-            // Build summary header
-            let summary = report.decision === 'BLOCK' 
-              ? '## 🚫 Compliance Check Failed\n\n' 
-              : '## ✅ Compliance Check Passed\n\n';
+            // Build summary header with branded name
+            let summary = `# 🛡️ SecureFlow AI\n`;
+            summary += `> *Intelligent Compliance-as-Code Scanner*\n\n`;
+            summary += report.decision === 'BLOCK' 
+              ? '## 🚫 Security Issues Found\n\n' 
+              : '## ✅ Security Check Passed\n\n';
             
             // Risk metrics table (SCF-GRC-01)
             summary += `### 📊 Risk Assessment (SCF-GRC-01)\n\n`;
@@ -226,21 +209,29 @@ jobs:
               summary += `**Categories Detected:** ${owaspCats.join(', ')}\n\n`;
             }
             
-            // SCF Controls (SCF-GRC-03)
+            // SCF Controls - deduplicated and concise
             const scfControls = comp.scf_controls_violated || [];
             if (scfControls.length > 0) {
-              summary += `### 🏛️ SCF Controls Violated (SCF-GRC-03)\n`;
-              summary += `| Control | Description |\n|---------|-------------|\n`;
+              // Deduplicate and normalize control IDs
+              const uniqueControls = [...new Set(scfControls.map(c => {
+                // Extract main control category (e.g., "CRY-03" from "SCF-CRY-03" or "SCF-2.1.1")
+                const match = c.match(/(CRY|TDA|IAC|NET|LOG|VULN|SEC|AUT|CFG)[-]?\d*/i);
+                return match ? match[0].toUpperCase() : c.split(':')[0].trim();
+              }))].slice(0, 8);  // Max 8 controls
+              
               const controlDescs = {
-                'CRY-03': 'Secret Management', 'CRY-01': 'Cryptographic Controls',
-                'TDA-02': 'Secure Coding', 'IAC-01': 'Least Privilege',
-                'NET-01': 'Network Security', 'LOG-01': 'Audit Logging',
-                'VULN-11': 'Vulnerability Identification', 'VULN-14': 'SCA/Container Security'
+                'CRY': '🔐 Cryptography', 'TDA': '💻 Secure Coding', 'IAC': '🔑 Access Control',
+                'NET': '🌐 Network Security', 'LOG': '📝 Logging', 'VULN': '🛡️ Vulnerability Mgmt',
+                'SEC': '🔒 Security Controls', 'AUT': '👤 Authentication', 'CFG': '⚙️ Configuration'
               };
-              scfControls.forEach(c => {
-                summary += `| ${c} | ${controlDescs[c] || 'Security Control'} |\n`;
+              
+              const controlTags = uniqueControls.map(c => {
+                const key = Object.keys(controlDescs).find(k => c.includes(k));
+                return key ? controlDescs[key] : `📋 ${c}`;
               });
-              summary += `\n`;
+              
+              summary += `### 🏛️ Controls Violated\n`;
+              summary += `${controlTags.join(' • ')}\n\n`;
             }
             
             // Remediation SLAs (SCF-GRC-14)
@@ -251,7 +242,30 @@ jobs:
               summary += `\n`;
             }
             
-            summary += `📍 **See inline comments on code for detailed findings and fixes**\n\n`;
+            // Add MEDIUM/LOW findings to summary (not inline)
+            const mediumLow = findings.filter(f => 
+              f.severity?.toLowerCase() === 'medium' || f.severity?.toLowerCase() === 'low'
+            );
+            
+            if (mediumLow.length > 0) {
+              summary += `### 📝 Additional Findings (Medium/Low)\n\n`;
+              summary += `<details><summary>Click to expand ${mediumLow.length} findings</summary>\n\n`;
+              summary += `| Severity | File | Line | Issue | Fix |\n`;
+              summary += `|----------|------|------|-------|-----|\n`;
+              mediumLow.slice(0, 20).forEach(f => {
+                const icon = f.severity?.toLowerCase() === 'medium' ? '🟡' : '🔵';
+                const file = f.file?.split('/').pop() || 'N/A';
+                const title = (f.title || '').substring(0, 40);
+                const fix = (f.remediation || '').substring(0, 50);
+                summary += `| ${icon} ${f.severity} | ${file} | ${f.line || '-'} | ${title} | ${fix} |\n`;
+              });
+              if (mediumLow.length > 20) {
+                summary += `\n*...and ${mediumLow.length - 20} more*\n`;
+              }
+              summary += `</details>\n\n`;
+            }
+            
+            summary += `📍 **Critical/High issues have inline comments on the code**\n\n`;
             
             // Audit Evidence (SCF-GRC-03)
             summary += `<details><summary>📁 Audit Evidence (SCF-GRC-03: Control Assessment)</summary>\n\n`;
@@ -264,7 +278,7 @@ jobs:
             summary += `| AI Model | Google Gemini 2.0 Flash |\n`;
             summary += `</details>\n\n`;
             
-            summary += `---\n*🤖 AI Compliance-as-Code Bot v2.0 | Enterprise Security Analysis*`;
+            summary += `---\n*🛡️ **SecureFlow AI** | Powered by Google Gemini 2.0*`;
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -273,6 +287,14 @@ jobs:
               body: summary
             });
 
-      - name: Fail if Blocked
-        if: steps.scan.outputs.decision == 'BLOCK'
-        run: exit 1
+      - name: Check for Blocking Issues
+        if: always()
+        run: |
+          if [ -f scan_report.json ]; then
+            DECISION=$(cat scan_report.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('decision','ALLOW'))")
+            echo "Decision: $DECISION"
+            if [ "$DECISION" = "BLOCK" ]; then
+              echo "❌ BLOCKING: Critical/High security issues found!"
+              exit 1
+            fi
+          fi
