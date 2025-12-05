@@ -387,8 +387,19 @@ If code has vulnerabilities, findings array MUST NOT be empty."""
                 code=code_truncated
             )
             
-            # Call Gemini API
-            response = self.model.generate_content(prompt)
+            # Call Gemini API with retry on rate limit
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = self.model.generate_content(prompt)
+                    break
+                except Exception as e:
+                    if "429" in str(e) and attempt < max_retries - 1:
+                        wait_time = 20 * (attempt + 1)  # 20s, 40s, 60s
+                        print(f"   ⏳ Rate limited, waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        raise e
             
             elapsed = time.time() - start_time
             print(f"   ⏱️  AI response time: {elapsed:.1f}s")
@@ -468,7 +479,7 @@ def main():
     SKIP_PATHS = ('.github/', 'node_modules/', 'target/', 'build/', '.git/', '__pycache__/', 'test-samples/dependencies/')
     
     # Scan all relevant files
-    MAX_FILES = 50
+    MAX_FILES = 5  # Limit for free tier quota
     
     # Filter files first
     files_to_scan = []
