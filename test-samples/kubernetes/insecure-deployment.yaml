@@ -1,0 +1,112 @@
+# Insecure Kubernetes Deployment
+#
+# TEST SCENARIO: AI should detect container security issues
+# - Privileged containers
+# - Running as root
+# - Missing resource limits
+# - Host network access
+# - Sensitive data in env vars
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnerable-app
+  namespace: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vulnerable-app
+  template:
+    metadata:
+      labels:
+        app: vulnerable-app
+    spec:
+      # VULNERABILITY: Host network access (SCF-NET-01)
+      # AI CONTEXT TEST: Should detect hostNetwork as high risk
+      hostNetwork: true
+      hostPID: true      # CRITICAL: Access to host processes!
+      
+      containers:
+      - name: main-app
+        image: company/app:latest  # CRITICAL: Using 'latest' tag
+        
+        # VULNERABILITY: Privileged container (SCF-IAC-01)
+        securityContext:
+          privileged: true           # CRITICAL: Full host access!
+          runAsUser: 0               # CRITICAL: Running as root!
+          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: false  # Should be true
+        
+        # VULNERABILITY: Hardcoded secrets in env vars (SCF-CRY-03)
+        # AI CONTEXT TEST: Should detect secrets in plain text
+        env:
+        - name: DATABASE_PASSWORD
+          value: "ProductionDbPass123!"    # CRITICAL: Hardcoded secret!
+        - name: API_KEY
+          value: "sk-prod-api-key-12345"   # CRITICAL: Hardcoded API key!
+        - name: JWT_SECRET
+          value: "super-secret-jwt-key"    # CRITICAL: Hardcoded JWT secret!
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # CRITICAL!
+        
+        # VULNERABILITY: Missing resource limits (DoS risk)
+        # AI CONTEXT TEST: Should flag missing limits as medium risk
+        # Missing: resources.limits.cpu and resources.limits.memory
+        
+        ports:
+        - containerPort: 8080
+        - containerPort: 22  # CRITICAL: SSH in container?
+        
+        # VULNERABILITY: Mounting sensitive host paths
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: docker-socket
+          mountPath: /var/run/docker.sock  # CRITICAL: Docker socket access!
+      
+      volumes:
+      # VULNERABILITY: Mounting host filesystem (SCF-IAC-01)
+      - name: host-root
+        hostPath:
+          path: /                # CRITICAL: Entire host filesystem!
+          type: Directory
+      
+      # VULNERABILITY: Docker socket mount (container escape)
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock  # CRITICAL: Can control Docker daemon!
+          type: Socket
+
+---
+# VULNERABILITY: Service exposing sensitive ports
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnerable-service
+spec:
+  type: LoadBalancer  # Publicly exposed
+  selector:
+    app: vulnerable-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: ssh
+    port: 22           # CRITICAL: SSH exposed via LoadBalancer!
+    targetPort: 22
+  - name: debug
+    port: 5005         # CRITICAL: Debug port exposed!
+    targetPort: 5005
+
+---
+# VULNERABILITY: ConfigMap with secrets (should be Secret)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  # CRITICAL: Secrets in ConfigMap (not encrypted at rest)
+  database.password: "ProductionPassword123"
+  api.secret: "secret-api-key-value"
+  encryption.key: "AES256-encryption-key-here"
